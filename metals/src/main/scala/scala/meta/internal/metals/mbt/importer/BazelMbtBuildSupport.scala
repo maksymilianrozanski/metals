@@ -1,13 +1,12 @@
 package scala.meta.internal.metals.mbt.importer
 
-import java.{util => ju}
-
+import java.util as ju
 import scala.collection.mutable
-
-import scala.meta.internal.metals.MetalsEnrichments._
+import scala.meta.internal.metals.MetalsEnrichments.*
 import scala.meta.internal.metals.mbt.MbtBuild
 import scala.meta.internal.metals.mbt.MbtDependencyModule
 import scala.meta.internal.metals.mbt.MbtNamespace
+import scala.meta.internal.semver.SemVer
 
 sealed abstract class BazelMbtNamespaceMode(val name: String)
 
@@ -40,15 +39,21 @@ object BazelMbtBuildSupport {
       runTargets: Set[String],
       classDirectoriesByTarget: Map[String, String],
       dependencyModules: Seq[MbtDependencyModule],
-      scalaVersion: Option[String],
+      scalaVersionByTarget: Map[String, Option[String]],
   ): MbtBuild = {
     val depModules = new ju.ArrayList[MbtDependencyModule]()
     dependencyModules.foreach(depModules.add)
+    val fallbackScalaVersion = scalaVersionByTarget.values.flatten.toSeq
+      .maxByOption(SemVer.Version.fromString)
     if (targetLabels.isEmpty) {
       if (granularity == BazelMbtNamespaceMode.Workspace) {
         MbtBuild(
           depModules,
-          singleNamespace(workspaceNamespaceName, Set.empty, scalaVersion),
+          singleNamespace(
+            workspaceNamespaceName,
+            Set.empty,
+            fallbackScalaVersion,
+          ),
         )
       } else {
         MbtBuild.empty
@@ -124,6 +129,14 @@ object BazelMbtBuildSupport {
           )
         }
         for ((namespace, files) <- byBuildFile) {
+          val targetsForNs = targetLabels.filter(t => keys(t) == namespace)
+          val nsScalaVersions = targetsForNs
+            .flatMap(t => scalaVersionByTarget.getOrElse(t, None))
+            .distinct
+          val nsScalaVersion =
+            nsScalaVersions
+              .maxByOption(SemVer.Version.fromString)
+              .orElse(fallbackScalaVersion)
           putNamespace(
             namespaces,
             namespace,
@@ -134,12 +147,19 @@ object BazelMbtBuildSupport {
             externalDepsByNs.getOrElse(namespace, Set.empty),
             runTargetsByNs.getOrElse(namespace, Set.empty),
             classDirectoriesByNs.get(namespace),
-            scalaVersion,
+            nsScalaVersion,
           )
         }
       } else {
         val allSrcs = srcFilesByTarget.values.flatten.toSet
         val allExtDeps = externalDepsByTarget.values.flatten.toSet
+        val wsScalaVersions = targetLabels
+          .flatMap(t => scalaVersionByTarget.getOrElse(t, None))
+          .distinct
+        val wsScalaVersion =
+          wsScalaVersions
+            .maxByOption(SemVer.Version.fromString)
+            .orElse(fallbackScalaVersion)
         putNamespace(
           namespaces,
           workspaceNamespaceName,
@@ -151,7 +171,7 @@ object BazelMbtBuildSupport {
           allExtDeps,
           runTargetsByNs.getOrElse(workspaceNamespaceName, Set.empty),
           classDirectoriesByNs.get(workspaceNamespaceName),
-          scalaVersion,
+          wsScalaVersion,
         )
       }
       MbtBuild(depModules, namespaces)
@@ -195,6 +215,7 @@ object BazelMbtBuildSupport {
         val pkg = rest.substring(0, c)
         val name = rest.substring(c + 1)
         if (name.isEmpty) None
+        else if (pkg.isEmpty) Some(name)
         else Some(s"$pkg/$name")
       }
     }

@@ -97,6 +97,14 @@ abstract class BazelMbtImporter(
         case Some(value) => Future.successful(Some(value))
         case None => queryScalaVersion(targets)
       }
+      scalaVersionByTarget = targets.map { target =>
+        val targetScalaVersion = externalDeps
+          .getOrElse(target, Nil)
+          .flatMap(extractScalaVersionFromLabel)
+          .headOption
+          .orElse(effectiveScalaVersion)
+        target -> targetScalaVersion
+      }.toMap
       build = BazelMbtBuildSupport.fromDiscovery(
         namespaceMode,
         targets,
@@ -108,7 +116,7 @@ abstract class BazelMbtImporter(
         runTargets,
         classDirectories,
         dependencyModules,
-        effectiveScalaVersion,
+        scalaVersionByTarget,
       )
       _ <- Future(Files.writeString(out.toNIO, MbtBuild.toJson(build)))
     } yield ()
@@ -205,7 +213,7 @@ abstract class BazelMbtImporter(
     externalDeps.map { case (target, deps) =>
       val matchedModuleIds = for {
         dep <- deps
-        normalizedDep = normalizeBazelLabel(dep)
+        normalizedDep = normalizeBazelLabel(dep, repositoryName)
         moduleId <- modulesByBazelLabel.get(normalizedDep)
       } yield moduleId
       target -> matchedModuleIds
@@ -226,10 +234,30 @@ abstract class BazelMbtImporter(
     } else None
   }
 
-  private def normalizeBazelLabel(label: String): String = {
-    val withoutDoubleAt =
-      if (label.startsWith("@@")) label.substring(1) else label
-    withoutDoubleAt.replaceAll("~[^/]+", "")
+  private def normalizeBazelLabel(
+      label: String,
+      repositoryName: String,
+  ): String = {
+    val doubleSlash = label.indexOf("//")
+    if (doubleSlash < 0) label
+    else {
+      val repoPart = label.substring(0, doubleSlash)
+      val targetPart = label.substring(doubleSlash)
+      val cleanRepo = repoPart.stripPrefix("@@").stripPrefix("@")
+      if (cleanRepo == repositoryName) {
+        s"@$repositoryName$targetPart"
+      } else if (
+        cleanRepo.endsWith(s"+$repositoryName") || cleanRepo.endsWith(
+          s"~$repositoryName"
+        )
+      ) {
+        s"@$repositoryName$targetPart"
+      } else {
+        val withoutDoubleAt =
+          if (label.startsWith("@@")) label.substring(1) else label
+        withoutDoubleAt.replaceAll("~[^/]+", "")
+      }
+    }
   }
 
   private def queryScalaVersionFromDeps(): Future[Option[String]] = for {
@@ -257,7 +285,7 @@ abstract class BazelMbtImporter(
   }
 
   private def extractScalaVersionFromLabel(label: String): Option[String] = {
-    val versionPattern = """scala[_-]library[_-](\d+\.\d+\.\d+)""".r
+    val versionPattern = """scala3?[_-]library[_-](\d+\.\d+\.\d+)""".r
     versionPattern.findFirstMatchIn(label).map(_.group(1))
   }
 
