@@ -18,6 +18,7 @@ import scala.meta.internal.metals.clients.language.MetalsLanguageClient
 import scala.meta.internal.metals.mbt.MbtBuild
 import scala.meta.internal.metals.mbt.MbtDependencyModule
 import scala.meta.internal.process.ExitCodes
+import scala.meta.internal.semver.SemVer.Version
 import scala.meta.io.AbsolutePath
 
 /**
@@ -92,17 +93,15 @@ abstract class BazelMbtImporter(
         dependencyModules,
         repositoryName,
       )
-      scalaVersionFromDeps <- queryScalaVersionFromDeps()
-      effectiveScalaVersion <- scalaVersionFromDeps match {
-        case Some(value) => Future.successful(Some(value))
-        case None => queryScalaVersion(targets)
-      }
+      scalaVersions = targetsXmlDump.getStrings("scala_version")
+      effectiveScalaVersionValue = scalaVersions.values.flatten.toSeq
+        .maxByOption(Version.fromString)
+        .orElse(parseScalaVersionFromBuildFiles())
       scalaVersionByTarget = targets.map { target =>
-        val targetScalaVersion = externalDeps
-          .getOrElse(target, Nil)
-          .flatMap(extractScalaVersionFromLabel)
-          .headOption
-          .orElse(effectiveScalaVersion)
+        val targetScalaVersion = scalaVersions
+          .get(target)
+          .flatMap(_.maxByOption(Version.fromString))
+          .orElse(effectiveScalaVersionValue)
         target -> targetScalaVersion
       }.toMap
       build = BazelMbtBuildSupport.fromDiscovery(
@@ -260,16 +259,6 @@ abstract class BazelMbtImporter(
     }
   }
 
-  private def queryScalaVersionFromDeps(): Future[Option[String]] = for {
-    queryOutput <- BazelQuery.allScalaLibrariesQuery.run(queryEnv)
-    lines = asLines(queryOutput)
-  } yield lines.flatMap(extractScalaVersionFromLabel).headOption
-
-  private def queryScalaVersion(
-      @annotation.nowarn("msg=never used") targets: List[String]
-  ): Future[Option[String]] =
-    Future.successful(parseScalaVersionFromBuildFiles())
-
   private def parseScalaVersionFromBuildFiles(): Option[String] = {
     val versionPattern = """scala_version\s*=\s*["'](\d+\.\d+\.\d+)["']""".r
     val moduleFile = projectRoot.resolve("MODULE.bazel")
@@ -282,11 +271,6 @@ abstract class BazelMbtImporter(
       } else None
 
     extractFromFile(moduleFile).orElse(extractFromFile(workspaceFile))
-  }
-
-  private def extractScalaVersionFromLabel(label: String): Option[String] = {
-    val versionPattern = """scala3?[_-]library[_-](\d+\.\d+\.\d+)""".r
-    versionPattern.findFirstMatchIn(label).map(_.group(1))
   }
 
   private def queryOutputBase(): Future[Option[Path]] = {

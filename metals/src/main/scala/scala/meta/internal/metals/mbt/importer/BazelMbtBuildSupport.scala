@@ -1,8 +1,10 @@
 package scala.meta.internal.metals.mbt.importer
 
-import java.util as ju
+import java.{util => ju}
+
 import scala.collection.mutable
-import scala.meta.internal.metals.MetalsEnrichments.*
+
+import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals.mbt.MbtBuild
 import scala.meta.internal.metals.mbt.MbtDependencyModule
 import scala.meta.internal.metals.mbt.MbtNamespace
@@ -43,17 +45,13 @@ object BazelMbtBuildSupport {
   ): MbtBuild = {
     val depModules = new ju.ArrayList[MbtDependencyModule]()
     dependencyModules.foreach(depModules.add)
-    val fallbackScalaVersion = scalaVersionByTarget.values.flatten.toSeq
+    val scalaVersion = scalaVersionByTarget.values.flatten.toSeq
       .maxByOption(SemVer.Version.fromString)
     if (targetLabels.isEmpty) {
       if (granularity == BazelMbtNamespaceMode.Workspace) {
         MbtBuild(
           depModules,
-          singleNamespace(
-            workspaceNamespaceName,
-            Set.empty,
-            fallbackScalaVersion,
-          ),
+          singleNamespace(workspaceNamespaceName, Set.empty, scalaVersion),
         )
       } else {
         MbtBuild.empty
@@ -129,14 +127,14 @@ object BazelMbtBuildSupport {
           )
         }
         for ((namespace, files) <- byBuildFile) {
-          val targetsForNs = targetLabels.filter(t => keys(t) == namespace)
+          val targetsForNs = targetLabels.filter(keys(_) == namespace)
           val nsScalaVersions = targetsForNs
-            .flatMap(t => scalaVersionByTarget.getOrElse(t, None))
+            .flatMap(scalaVersionByTarget.getOrElse(_, None))
             .distinct
           val nsScalaVersion =
             nsScalaVersions
               .maxByOption(SemVer.Version.fromString)
-              .orElse(fallbackScalaVersion)
+              .orElse(scalaVersion)
           putNamespace(
             namespaces,
             namespace,
@@ -154,12 +152,12 @@ object BazelMbtBuildSupport {
         val allSrcs = srcFilesByTarget.values.flatten.toSet
         val allExtDeps = externalDepsByTarget.values.flatten.toSet
         val wsScalaVersions = targetLabels
-          .flatMap(t => scalaVersionByTarget.getOrElse(t, None))
+          .flatMap(scalaVersionByTarget.getOrElse(_, None))
           .distinct
         val wsScalaVersion =
           wsScalaVersions
             .maxByOption(SemVer.Version.fromString)
-            .orElse(fallbackScalaVersion)
+            .orElse(scalaVersion)
         putNamespace(
           namespaces,
           workspaceNamespaceName,
