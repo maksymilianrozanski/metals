@@ -94,9 +94,11 @@ abstract class BazelMbtImporter(
         repositoryName,
       )
       scalaVersions = targetsXmlDump.getStrings("scala_version")
-      effectiveScalaVersionValue = scalaVersions.values.flatten.toSeq
-        .maxByOption(Version.fromString)
-        .orElse(parseScalaVersionFromBuildFiles())
+      effectiveScalaVersionValue =
+        parseScalaVersionFromBuildFiles()
+          .orElse(
+            scalaVersions.values.flatten.toSeq.maxByOption(Version.fromString)
+          )
       scalaVersionByTarget = targets.map { target =>
         val targetScalaVersion = scalaVersions
           .get(target)
@@ -260,7 +262,7 @@ abstract class BazelMbtImporter(
   }
 
   private def parseScalaVersionFromBuildFiles(): Option[String] = {
-    val versionPattern = """scala_version\s*=\s*["'](\d+\.\d+\.\d+)["']""".r
+    val versionPattern = """(?i)scala_version\s*=\s*["'](\d+\.\d+\.\d+)["']""".r
     val moduleFile = projectRoot.resolve("MODULE.bazel")
     val workspaceFile = projectRoot.resolve("WORKSPACE")
 
