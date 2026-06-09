@@ -273,6 +273,7 @@ object BazelMbtBuildSupport {
         val pkg = rest.substring(0, c)
         val name = rest.substring(c + 1)
         if (name.isEmpty) None
+        else if (pkg.isEmpty) Some(name)
         else Some(s"$pkg/$name")
       }
     }
