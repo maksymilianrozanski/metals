@@ -226,7 +226,7 @@ abstract class BazelMbtImporter(
     externalDeps.map { case (target, deps) =>
       val matchedModuleIds = for {
         dep <- deps
-        normalizedDep = normalizeBazelLabel(dep)
+        normalizedDep = normalizeBazelLabel(dep, repositoryName)
         moduleId <- modulesByBazelLabel.get(normalizedDep)
       } yield moduleId
       target -> matchedModuleIds
@@ -247,10 +247,30 @@ abstract class BazelMbtImporter(
     } else None
   }
 
-  private def normalizeBazelLabel(label: String): String = {
-    val withoutDoubleAt =
-      if (label.startsWith("@@")) label.substring(1) else label
-    withoutDoubleAt.replaceAll("~[^/]+", "")
+  private def normalizeBazelLabel(
+      label: String,
+      repositoryName: String,
+  ): String = {
+    val doubleSlash = label.indexOf("//")
+    if (doubleSlash < 0) label
+    else {
+      val repoPart = label.substring(0, doubleSlash)
+      val targetPart = label.substring(doubleSlash)
+      val cleanRepo = repoPart.stripPrefix("@@").stripPrefix("@")
+      if (cleanRepo == repositoryName) {
+        s"@$repositoryName$targetPart"
+      } else if (
+        cleanRepo.endsWith(s"+$repositoryName") || cleanRepo.endsWith(
+          s"~$repositoryName"
+        )
+      ) {
+        s"@$repositoryName$targetPart"
+      } else {
+        val withoutDoubleAt =
+          if (label.startsWith("@@")) label.substring(1) else label
+        withoutDoubleAt.replaceAll("~[^/]+", "")
+      }
+    }
   }
 
   private def parseScalaVersionFromBuildFiles(): Option[String] = {

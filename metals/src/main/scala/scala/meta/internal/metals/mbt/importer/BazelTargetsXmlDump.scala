@@ -89,7 +89,7 @@ class BazelTargetsXmlDump(xmlDump: String) {
   }
 
   private def isExternalDep(label: String): Boolean =
-    label.startsWith("@") && !label.startsWith("@@")
+    label.startsWith("@")
 
   private def isFilegroupRule(rule: scala.xml.Node): Boolean =
     (rule \ "@class").text == "filegroup"
