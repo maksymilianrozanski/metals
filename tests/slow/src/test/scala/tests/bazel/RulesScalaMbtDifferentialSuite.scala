@@ -31,31 +31,36 @@ class RulesScalaMbtDifferentialSuite
       s"$srcjars/MixedLanguageDependent.scala",
       "List(Java@@Source.line",
       DiffFeature.Definition,
-      "def of Java symbol packaged inside a srcjar",
+      note = "def of Java symbol packaged inside a srcjar",
+      category = "srcjar,java-interop",
     ),
     Probe(
       s"$srcjars/MixedLanguageDependent.scala",
       ", Scala@@Source.line)",
       DiffFeature.Definition,
-      "def of Scala symbol packaged inside a srcjar",
+      note = "def of Scala symbol packaged inside a srcjar",
+      category = "srcjar",
     ),
     Probe(
       s"$srcjars/MixedLanguageDependent.scala",
       "JavaSource.li@@ne",
       DiffFeature.Hover,
-      "hover on Java member from srcjar (expect String)",
+      note = "hover on Java member from srcjar (expect String)",
+      category = "srcjar,java-interop",
     ),
     Probe(
       s"$srcjars/MixedLanguageDependent.scala",
       "ScalaSource.li@@ne",
       DiffFeature.Hover,
-      "hover on Scala member from srcjar (expect String)",
+      note = "hover on Scala member from srcjar (expect String)",
+      category = "srcjar",
     ),
     Probe(
       s"$srcjars/MixedLanguageDependent.scala",
       "List(Java@@Source",
       DiffFeature.References,
-      "references of JavaSource across files",
+      note = "references of JavaSource across files",
+      category = "srcjar,java-interop",
     ),
     // NOTE: DocumentSymbol intentionally omitted here — the shared
     // `Semanticdbs.printTextDocument` test renderer throws a line-bounds error
@@ -65,7 +70,8 @@ class RulesScalaMbtDifferentialSuite
       s"$srcjars/JavaDependent.scala",
       "= Java@@Source.line",
       DiffFeature.Definition,
-      "def of Java symbol from a second dependent file",
+      note = "def of Java symbol from a second dependent file",
+      category = "srcjar,java-interop",
     ),
   )
 

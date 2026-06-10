@@ -10,15 +10,20 @@ object DiffFeature {
 }
 
 /**
- * A probe locates a cursor with a `@@`-marked snippet that is a substring of the
- * real file (same convention as `TestingServer.definitionSubstringQuery`).
- * `DocumentSymbol` ignores the query.
+ * A probe locates a cursor with a `@@`-marked snippet that is a unique substring
+ * of the real file. `DocumentSymbol` ignores the query.
+ *
+ * `category` tags the high-risk pattern this probe exercises (e.g. "srcjar",
+ * "cross-target", "java-interop", "multi-version", "custom-root", "generated").
+ * It is what lets the diff analyzer aggregate failures into patterns across
+ * files and repos, so always set it.
  */
 final case class Probe(
     file: String,
     query: String,
     feature: DiffFeature,
     note: String = "",
+    category: String = "",
 )
 
 /** The MBT result vs the BSP (source of truth) result for one probe. */
@@ -53,11 +58,16 @@ object MbtDifferentialReport {
       .sorted
       .mkString(", ")
 
-  def markdown(repoHead: String, discrepancies: List[Discrepancy]): String = {
+  def markdown(
+      metalsHead: String,
+      repoHead: String,
+      discrepancies: List[Discrepancy],
+  ): String = {
     val header =
       s"""|# MBT vs BSP differential report
           |
-          |repo HEAD: `$repoHead`
+          |metals version: `$metalsHead`
+          |target repo HEAD: `$repoHead`
           |
           |summary: ${summary(discrepancies)}
           |
@@ -66,8 +76,10 @@ object MbtDifferentialReport {
           |""".stripMargin
     val body = discrepancies
       .map { d =>
+        val cat =
+          if (d.probe.category.nonEmpty) s" _[${d.probe.category}]_" else ""
         val head =
-          s"## ${d.probe.feature.name} — `${d.probe.file}` — **${d.status}**"
+          s"## ${d.probe.feature.name} — `${d.probe.file}` — **${d.status}**$cat"
         val q =
           s"query: `${d.probe.query.replace("\n", "\\n")}`" +
             (if (d.probe.note.nonEmpty) s" — ${d.probe.note}" else "")
@@ -100,12 +112,18 @@ object MbtDifferentialReport {
       case c => c.toString
     }
 
-  def json(repoHead: String, discrepancies: List[Discrepancy]): String = {
+  def json(
+      metalsHead: String,
+      repoHead: String,
+      discrepancies: List[Discrepancy],
+  ): String = {
     val items = discrepancies.map { d =>
       s"""{"file":"${esc(d.probe.file)}","feature":"${d.probe.feature.name}",""" +
-        s""""query":"${esc(d.probe.query)}","note":"${esc(d.probe.note)}",""" +
-        s""""status":"${d.status}","bsp":"${esc(d.bsp)}","mbt":"${esc(d.mbt)}"}"""
+        s""""category":"${esc(d.probe.category)}","query":"${esc(d.probe.query)}",""" +
+        s""""note":"${esc(d.probe.note)}","status":"${d.status}",""" +
+        s""""bsp":"${esc(d.bsp)}","mbt":"${esc(d.mbt)}"}"""
     }
-    s"""{"repoHead":"${esc(repoHead)}","results":[${items.mkString(",")}]}"""
+    s"""{"metalsHead":"${esc(metalsHead)}","repoHead":"${esc(repoHead)}",""" +
+      s""""results":[${items.mkString(",")}]}"""
   }
 }
