@@ -11,15 +11,23 @@ import scala.meta.internal.metals.AutoImportBuildKind
 import scala.meta.internal.metals.Configs.JavaSymbolLoaderConfig
 import scala.meta.internal.metals.Configs.ReferenceProviderConfig
 import scala.meta.internal.metals.Configs.WorkspaceSymbolProviderConfig
+import scala.meta.internal.metals.HoverExtParams
 import scala.meta.internal.metals.Messages
+import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals.RecursivelyDelete
 import scala.meta.internal.metals.UserConfiguration
 import scala.meta.internal.metals.mbt.MbtBuildServer
 import scala.meta.io.AbsolutePath
 
 import org.eclipse.lsp4j.Location
+import org.eclipse.lsp4j.ReferenceContext
+import org.eclipse.lsp4j.ReferenceParams
+import org.eclipse.lsp4j.TextDocumentIdentifier
+import org.eclipse.lsp4j.TextDocumentPositionParams
+import org.eclipse.lsp4j.{Position => LspPosition}
 import tests.BaseLspSuite
 import tests.BazelMbtTestInitializer
+import tests.TestHovers
 
 /**
  * Differential harness: import a REAL repo twice through the real Metals server
@@ -93,7 +101,9 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
 
   private def writeProjectView(): Unit = {
     val content =
-      "targets:\n" + projectViewTargets.map(t => s"    $t").mkString("\n") + "\n"
+      "targets:\n" + projectViewTargets
+        .map(t => s"    $t")
+        .mkString("\n") + "\n"
     Files.writeString(projectView.toNIO, content)
   }
 
@@ -122,7 +132,7 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
     } else uri
   }
 
-  private def renderLocations(locs: List[Location]): String = {
+  private def renderLocations(locs: Seq[Location]): String = {
     val rendered = for (loc <- locs) yield {
       val r = loc.getRange
       s"${normalizeUri(loc.getUri)}:${r.getStart.getLine}:${r.getStart.getCharacter}" +
@@ -131,18 +141,60 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
     if (rendered.isEmpty) "<empty>" else rendered.sorted.mkString("\n")
   }
 
+  /**
+   * Locate a probe cursor in the REAL file from its `@@`-marked snippet WITHOUT
+   * mutating the buffer. TestingServer's `offsetParams`/`hover` helpers call
+   * `positionFromString`, which overwrites the whole file with the bare snippet
+   * — fine for synthetic inline files, wrong for whole-file probes against a
+   * real checkout. The snippet must be a unique substring of the file.
+   */
+  private def positionOf(
+      file: String,
+      query: String,
+  ): (TextDocumentIdentifier, LspPosition, String) = {
+    val at = query.indexOf("@@")
+    require(at >= 0, s"probe query must contain @@: '$query'")
+    val needle = query.replace("@@", "")
+    val path = server.toPath(file)
+    val text = path.readText
+    val idx = text.indexOf(needle)
+    require(idx >= 0, s"probe snippet not found in $file: '$needle'")
+    require(
+      text.indexOf(needle, idx + 1) < 0,
+      s"probe snippet not unique in $file: '$needle'",
+    )
+    val offset = idx + at
+    val before = text.substring(0, offset)
+    val line = before.count(_ == '\n')
+    val col = offset - (before.lastIndexOf('\n') + 1)
+    (path.toTextDocumentIdentifier, new LspPosition(line, col), text)
+  }
+
   private def capture(probe: Probe): Future[String] = {
     val result = probe.feature match {
       case DiffFeature.Definition =>
-        server
-          .definitionSubstringQuery(probe.file, probe.query)
-          .map(renderLocations)
+        val (tdi, pos, _) = positionOf(probe.file, probe.query)
+        server.fullServer
+          .definition(new TextDocumentPositionParams(tdi, pos))
+          .asScala
+          .map(locs => renderLocations(locs.asScala.toSeq))
       case DiffFeature.References =>
-        server
-          .getReferenceLocations(probe.file, probe.query)
-          .map(renderLocations)
+        val (tdi, pos, _) = positionOf(probe.file, probe.query)
+        val params = new ReferenceParams(tdi, pos, new ReferenceContext(true))
+        server.fullServer
+          .references(params)
+          .asScala
+          .map(locs => renderLocations(locs.asScala.toSeq))
       case DiffFeature.Hover =>
-        server.hover(probe.file, probe.query, workspace).map(_.trim)
+        val (tdi, pos, text) = positionOf(probe.file, probe.query)
+        server.fullServer
+          .hover(new HoverExtParams(tdi, pos))
+          .asScala
+          .map(h =>
+            TestHovers
+              .renderAsString(text, Option(h), includeRange = false)
+              .trim
+          )
       case DiffFeature.DocumentSymbol =>
         server.documentSymbols(probe.file).map(_.trim)
     }
@@ -159,7 +211,10 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
         for {
           _ <- server.didOpen(file)
           _ <- server.didFocus(file)
-          _ <- server.fullServer.getServiceFor(path).compilations.compileFile(path)
+          _ <- server.fullServer
+            .getServiceFor(path)
+            .compilations
+            .compileFile(path)
         } yield ()
       }
     }
@@ -167,9 +222,14 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
   private def runProbes(): Future[Map[Probe, String]] = {
     val files = probes.map(_.file).distinct
     for {
+      // Deterministic barrier: wait for initial workspace indexing to finish so
+      // cross-file references / cross-target definitions are reproducible. (For
+      // the MBT fallback service this completes immediately; for BSP it gates on
+      // the semanticdb index.)
+      _ <- server.server.indexingPromise.future
       _ <- prepareFiles(files)
-      // Give the real (classpath-backed) PC time to replace the fallback PC on
-      // the BSP side before probing, otherwise the oracle reads as empty.
+      // Then let the real (classpath-backed) PC replace the fallback PC on the
+      // BSP side before probing, otherwise the oracle reads as empty.
       _ <- server.waitFor(3000)
       results <- probes.foldLeft(Future.successful(Map.empty[Probe, String])) {
         (acc, probe) =>
@@ -229,9 +289,14 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
     Files.createDirectories(dir.toNIO)
     val md = dir.resolve(s"$suiteName.md")
     val js = dir.resolve(s"$suiteName.json")
-    Files.writeString(md.toNIO, MbtDifferentialReport.markdown(head, discrepancies))
+    Files.writeString(
+      md.toNIO,
+      MbtDifferentialReport.markdown(head, discrepancies),
+    )
     Files.writeString(js.toNIO, MbtDifferentialReport.json(head, discrepancies))
-    scribe.info(s"[mbt-differential] ${MbtDifferentialReport.summary(discrepancies)}")
+    scribe.info(
+      s"[mbt-differential] ${MbtDifferentialReport.summary(discrepancies)}"
+    )
     scribe.info(s"[mbt-differential] report: ${md.toNIO}")
     scribe.info("\n" + MbtDifferentialReport.markdown(head, discrepancies))
   }

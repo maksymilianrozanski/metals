@@ -26,6 +26,20 @@ class SemanticdbExampleMbtDifferentialSuite
   override def projectViewTargets: List[String] = List("//...")
 
   override def probes: List[Probe] = List(
+    // Same-file/same-target baseline — MBT should handle this, so expect MATCH.
+    Probe(
+      "Main.scala",
+      "println(f@@oo.sayHello)",
+      DiffFeature.Definition,
+      "def of local val foo (same file) — expect MATCH",
+    ),
+    Probe(
+      "Main.scala",
+      "println(f@@oo.sayHello)",
+      DiffFeature.Hover,
+      "hover on local val foo (same file) — expect MATCH (: Foo)",
+    ),
+    // Cross-target probes below — exercise MBT's namespace dependency graph.
     Probe(
       "Main.scala",
       "new F@@oo()",
