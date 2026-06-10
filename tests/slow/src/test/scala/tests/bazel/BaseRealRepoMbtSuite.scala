@@ -107,15 +107,27 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
     Files.writeString(projectView.toNIO, content)
   }
 
-  private def repoHead: String =
+  private def gitShortHead(dir: java.io.File): String =
     scala.util
-      .Try(
-        scala.sys.process
-          .Process(List("git", "rev-parse", "--short", "HEAD"), repoDir.toFile)
+      .Try {
+        val sha = scala.sys.process
+          .Process(List("git", "rev-parse", "--short", "HEAD"), dir)
           .!!
           .trim
-      )
+        val dirty = scala.sys.process
+          .Process(List("git", "status", "--porcelain"), dir)
+          .!!
+          .trim
+          .nonEmpty
+        if (dirty) s"$sha+dirty" else sha
+      }
       .getOrElse("unknown")
+
+  /** HEAD of the target repo being imported. */
+  private def repoHead: String = gitShortHead(repoDir.toFile)
+
+  /** HEAD of the Metals checkout under test (so reports are version-traceable). */
+  private def metalsHead: String = gitShortHead(PathIO.workingDirectory.toFile)
 
   /** Render an LSP uri relative to the workspace (or tagged for jars/readonly). */
   private def normalizeUri(uri: String): String = {
@@ -281,9 +293,10 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
   }
 
   private def writeReport(
-      head: String,
+      repoHead: String,
       discrepancies: List[Discrepancy],
   ): Unit = {
+    val mHead = metalsHead
     val dir =
       PathIO.workingDirectory.resolve("target").resolve("mbt-differential")
     Files.createDirectories(dir.toNIO)
@@ -291,13 +304,19 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
     val js = dir.resolve(s"$suiteName.json")
     Files.writeString(
       md.toNIO,
-      MbtDifferentialReport.markdown(head, discrepancies),
+      MbtDifferentialReport.markdown(mHead, repoHead, discrepancies),
     )
-    Files.writeString(js.toNIO, MbtDifferentialReport.json(head, discrepancies))
+    Files.writeString(
+      js.toNIO,
+      MbtDifferentialReport.json(mHead, repoHead, discrepancies),
+    )
     scribe.info(
-      s"[mbt-differential] ${MbtDifferentialReport.summary(discrepancies)}"
+      s"[mbt-differential] metals=$mHead repo=$repoHead " +
+        MbtDifferentialReport.summary(discrepancies)
     )
     scribe.info(s"[mbt-differential] report: ${md.toNIO}")
-    scribe.info("\n" + MbtDifferentialReport.markdown(head, discrepancies))
+    scribe.info(
+      "\n" + MbtDifferentialReport.markdown(mHead, repoHead, discrepancies)
+    )
   }
 }

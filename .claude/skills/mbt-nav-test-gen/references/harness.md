@@ -57,7 +57,8 @@ The two phases run in one test by swapping servers (`cancelServer()` +
 ## Probe model
 
 ```scala
-Probe(file: String, query: String, feature: DiffFeature, note: String = "")
+Probe(file: String, query: String, feature: DiffFeature,
+      note: String = "", category: String = "")
 ```
 
 - `file` — workspace-relative path (relative to `repoDir`).
@@ -71,6 +72,14 @@ Probe(file: String, query: String, feature: DiffFeature, note: String = "")
   DocumentSymbol the query is ignored (pass `""`).
 - `feature` — `DiffFeature.Definition | References | Hover | DocumentSymbol`.
 - `note` — human intent; also a good place to record the expected answer.
+- `category` — the high-risk pattern this probe exercises (`srcjar`,
+  `cross-target`, `java-interop`, `multi-version`, `custom-root`, `generated`,
+  `same-file`). Always set it: the diff analyzer aggregates failures by category
+  to turn N scattered failures into one named implementation gap.
+
+Reports also record `metalsHead` (the Metals version under test, with a `+dirty`
+marker for uncommitted trees) and `repoHead` (the target repo), so archived
+reports are version-traceable across runs.
 
 `@@` example: file contains `val foo = new Foo()`. To probe the definition of
 `Foo`, use query `new F@@oo()`.

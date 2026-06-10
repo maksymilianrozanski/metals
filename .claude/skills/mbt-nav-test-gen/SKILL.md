@@ -150,6 +150,27 @@ deliverable. Reports are gitignored build output.
 Format any new Scala with `./bin/scalafmt <file>` and `sbt --client scalafixAll`
 before the user commits.
 
+## Agents & the bug-fixing loop
+
+This skill is the shared playbook for a small group of agents (in
+`.claude/agents/`) that find and help fix MBT import bugs:
+
+- **mbt-smoke-test-creator** — given a repo (remote URL or local path), uses
+  Mode 1 to find high-risk files, generate a `*MbtDifferentialSuite`, and run it.
+  Its likely-bug list feeds the others.
+- **mbt-diff-analyzer** — runs selected suites under two code versions (commits;
+  typically before-fix vs after-fix), diffs the reports, decides whether changes
+  are expected, aggregates failures by `category` into named implementation gaps,
+  and emits precise reproducible scenarios. It holds the test code constant
+  (overlays it onto each checkout) so only the MBT implementation varies.
+
+The loop: smoke-test-creator surfaces bugs → an engineer (or a fixer agent)
+changes Metals → mbt-diff-analyzer runs the suites before vs after and reports
+exactly what was fixed and whether anything regressed. That before/after diff is
+the test-suite feedback after a fix. Keep `category` accurate on every probe — it
+is what makes "this fails in many places" become "go-to-definition is broken for
+cross-target symbols", which is the actionable unit a fix targets.
+
 ## Reference files
 
 - `references/harness.md` — `BaseRealRepoMbtSuite`/`Probe`/`DiffFeature` API,

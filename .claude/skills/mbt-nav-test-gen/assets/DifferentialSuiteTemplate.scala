@@ -31,7 +31,11 @@ class TemplateMbtDifferentialSuite
       "path/to/File.scala",
       "some uniq@@ue snippet",
       DiffFeature.Definition,
-      "what this checks / expected target",
+      note = "what this checks / expected target",
+      // category tags the high-risk pattern so the diff analyzer can aggregate
+      // failures across files/repos: srcjar | cross-target | java-interop |
+      // multi-version | custom-root | generated | same-file
+      category = "cross-target",
     )
     // ... more probes ...
   )
