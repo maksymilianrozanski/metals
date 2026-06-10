@@ -103,6 +103,17 @@ object BazelQuery {
     BazelQuery(query, outputMode = StreamedJsonProto)
   }
 
+  /**
+   * Queries `@rules_scala_config//:scala_version` (the rules_scala
+   * default-version `string_setting`) so its `build_setting_default` gives the
+   * active Scala version without parsing MODULE.bazel/WORKSPACE.
+   */
+  def scalaConfigQuery: BazelQuery =
+    BazelQuery(
+      "@rules_scala_config//:scala_version",
+      outputMode = StreamedJsonProto,
+    )
+
   private val ruleKinds: List[String] =
     List(
       "scala_library", "java_library", "scala_binary", "java_binary",

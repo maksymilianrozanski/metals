@@ -1,10 +1,11 @@
 package scala.meta.internal.metals.mbt.importer
 
 import scala.collection.mutable
-import scala.meta.internal.semver.SemVer
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
+
+import scala.meta.internal.semver.SemVer
 
 /**
  * Recovers, per target, which source files belong to which Scala version from
@@ -65,6 +66,38 @@ object BazelBuildSrcs {
       versions.maxByOption(SemVer.Version.fromString).map(label -> _)
     }.toMap
   }
+
+  /**
+   * Maps each target that explicitly sets a non-empty `scala_version` STRING
+   * attribute to that version. Targets leaving it at its empty default (the
+   * common case) are absent, so the caller falls back to the workspace default
+   * from [[BazelScalaConfig]]. Unparseable lines are skipped, as in [[parse]].
+   */
+  def scalaVersionAttrByTarget(queryOutput: String): Map[String, String] =
+    queryOutput.linesIterator
+      .filter(_.trim.nonEmpty)
+      .flatMap(parseScalaVersionAttr)
+      .toMap
+
+  private def parseScalaVersionAttr(
+      jsonLine: String
+  ): Option[(String, String)] =
+    Try {
+      val target = ujson.read(jsonLine)
+      for {
+        rule <- target.obj.get("rule")
+        name <- rule.obj.get("name").collect { case ujson.Str(n) => n }
+        version <- stringAttribute(rule, "scala_version")
+        if version.nonEmpty
+      } yield name -> version
+    } match {
+      case Success(parsed) => parsed
+      case Failure(err) =>
+        scribe.debug(
+          s"bazel-mbt: skipping unparseable query target: ${err.getMessage}"
+        )
+        None
+    }
 
   private val scalaVersionKey = """:scala_version_(\d+_\d+_\d+)""".r
 
@@ -141,6 +174,15 @@ object BazelBuildSrcs {
 
   private def attributeName(attribute: ujson.Value): Option[String] =
     attribute.obj.get("name").collect { case ujson.Str(n) => n }
+
+  private def stringAttribute(
+      rule: ujson.Value,
+      name: String,
+  ): Option[String] =
+    attributes(rule)
+      .find(attributeName(_).contains(name))
+      .flatMap(_.obj.get("stringValue"))
+      .collect { case ujson.Str(s) => s }
 
   private def arr(value: ujson.Value, key: String): List[ujson.Value] =
     value.obj.get(key).toList.flatMap(_.arr)
