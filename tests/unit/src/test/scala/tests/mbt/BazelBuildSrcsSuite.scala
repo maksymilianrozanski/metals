@@ -56,6 +56,19 @@ class BazelBuildSrcsSuite extends FunSuite {
     assertEquals(srcs.byVersion, Map.empty[String, Set[String]])
   }
 
+  test("scala-version-attr-by-target-keeps-only-explicit-versions") {
+    // One rule pins `scala_version = "3.3.7"`; the other leaves it at its empty
+    // default (`stringValue:""`, as in real proto output) and is excluded.
+    val output =
+      """|{"type":"RULE","rule":{"name":"//a:lib","ruleClass":"scala_library","attribute":[{"name":"scala_version","type":"STRING","stringValue":"3.3.7","explicitlySpecified":true}]}}
+         |{"type":"RULE","rule":{"name":"//b:lib","ruleClass":"scala_library","attribute":[{"name":"scala_version","type":"STRING","stringValue":"","explicitlySpecified":false}]}}
+         |""".stripMargin
+    assertEquals(
+      BazelBuildSrcs.scalaVersionAttrByTarget(output),
+      Map("//a:lib" -> "3.3.7"),
+    )
+  }
+
   test("inactive-sources-are-non-default-version-branches") {
     val inactive = BazelBuildSrcs.inactiveSourceVersions(
       jsonOutput,

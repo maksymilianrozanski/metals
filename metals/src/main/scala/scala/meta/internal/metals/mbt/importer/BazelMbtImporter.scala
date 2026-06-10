@@ -93,22 +93,30 @@ abstract class BazelMbtImporter(
         dependencyModules,
         repositoryName,
       )
-      scalaVersions = targetsXmlDump.getStrings("scala_version")
-      effectiveScalaVersionValue =
-        parseScalaVersionFromBuildFiles()
-          .orElse(
-            scalaVersions.values.flatten.toSeq.maxByOption(Version.fromString)
-          )
-      scalaVersionByTarget = targets.map { target =>
-        val targetScalaVersion = scalaVersions
-          .get(target)
-          .flatMap(_.maxByOption(Version.fromString))
-          .orElse(effectiveScalaVersionValue)
-        target -> targetScalaVersion
-      }.toMap
       selectAwareSrcsOutput <- BazelQuery
         .selectAwareSrcsQuery(targets)
         .run(queryEnv)
+      scalaConfigQueryOutput <- BazelQuery.scalaConfigQuery.run(queryEnv)
+      bazelDefaultVersion =
+        BazelScalaConfig.defaultScalaVersion(scalaConfigQueryOutput)
+      _ = scribe.info(
+        s"bazel-mbt: resolved default Scala version: ${bazelDefaultVersion.getOrElse("<none>")}"
+      )
+      // A target's per-target Scala version comes from an explicit
+      // `scala_version` attribute (rare); otherwise it resolves to the
+      // workspace default, which is the highest version any target pins if the
+      // config query yielded nothing.
+      perTargetVersionAttr =
+        BazelBuildSrcs.scalaVersionAttrByTarget(selectAwareSrcsOutput)
+      effectiveScalaVersionValue =
+        bazelDefaultVersion.orElse(
+          perTargetVersionAttr.values.toSeq.maxByOption(Version.fromString)
+        )
+      scalaVersionByTarget = targets.map { target =>
+        target -> perTargetVersionAttr
+          .get(target)
+          .orElse(effectiveScalaVersionValue)
+      }.toMap
       inactiveSourceVersions = BazelBuildSrcs.inactiveSourceVersions(
         selectAwareSrcsOutput,
         scalaVersionByTarget,
@@ -271,20 +279,6 @@ abstract class BazelMbtImporter(
         withoutDoubleAt.replaceAll("~[^/]+", "")
       }
     }
-  }
-
-  private def parseScalaVersionFromBuildFiles(): Option[String] = {
-    val versionPattern = """(?i)scala_version\s*=\s*["'](\d+\.\d+\.\d+)["']""".r
-    val moduleFile = projectRoot.resolve("MODULE.bazel")
-    val workspaceFile = projectRoot.resolve("WORKSPACE")
-
-    def extractFromFile(path: AbsolutePath): Option[String] =
-      if (Files.exists(path.toNIO)) {
-        val content = new String(Files.readAllBytes(path.toNIO))
-        versionPattern.findFirstMatchIn(content).map(_.group(1))
-      } else None
-
-    extractFromFile(moduleFile).orElse(extractFromFile(workspaceFile))
   }
 
   private def queryOutputBase(): Future[Option[Path]] = {
