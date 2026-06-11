@@ -44,10 +44,14 @@ class RulesScalaCrossVersionMbtDifferentialSuite
 
   // CRITICAL: keep the scope narrow so NO Scala 3-default target is imported —
   // that is what made the pre-fix max-version fallback collapse to Scala 2 and
-  // reproduce the bug. (All targets under this package use the workspace
-  // default Scala 2.12 config.) Do NOT widen to //...
+  // reproduce the bug. (All targets in this scope use the workspace default
+  // Scala 2.12 config; the reporter package is a java_library.) Do NOT widen
+  // to //... The reporter package is dependency_analyzer's direct dep — in
+  // scope so the unconfigured-sources namespace can declare a real
+  // cross-package dependsOn edge.
   override def projectViewTargets: List[String] = List(
-    "//third_party/dependency_analyzer/..."
+    "//third_party/dependency_analyzer/...",
+    "//src/java/io/bazel/rulesscala/scalac/reporter/...",
   )
 
   override def probes: List[Probe] = List(
@@ -135,6 +139,52 @@ class RulesScalaCrossVersionMbtDifferentialSuite
       note = "same-file hover control (expect Map[AbstractFile,"
         + " global.Position])",
       category = "same-file",
+    ),
+    // --- dependsOn edges of the unconfigured-sources namespace ---
+    // DepsTrackingReporter is a Java class in the dependency target
+    // `//src/java/io/bazel/rulesscala/scalac/reporter` (in scope). Navigation
+    // from the inactive Scala 3 file into it exercises the synthetic
+    // namespace's cross-package dependsOn.
+    Probe(
+      s"$scala3Dir/DependencyAnalyzer.scala",
+      "reporter.Deps@@TrackingReporter",
+      DiffFeature.Definition,
+      note = "Scala 3 inactive-branch file -> Java class in a dependency"
+        + " Bazel target (import io.bazel.rulesscala.scalac.reporter."
+        + "DepsTrackingReporter)",
+      category = "multi-version,cross-target,java-interop",
+    ),
+    Probe(
+      s"$scala3Dir/DependencyAnalyzer.scala",
+      "reporter.Deps@@TrackingReporter",
+      DiffFeature.Hover,
+      note = "hover on the same Java dependency-target class",
+      category = "multi-version,cross-target,java-interop",
+    ),
+    // Stdlib navigation from the inactive Scala 3 file exercises the
+    // synthetic namespace's dependencyModules (external classpath / sources).
+    // Expected to stay broken until toolchain jars are mapped into
+    // dependencyModules — a measuring stick, not a current-fix assertion.
+    Probe(
+      s"$scala3Dir/DependencyAnalyzer.scala",
+      "keys.to@@Set.asJava",
+      DiffFeature.Definition,
+      note = "Scala 3 inactive-branch file -> scala-library `toSet`"
+        + " (external dependency navigation via dependencyModules)",
+      category = "multi-version,external-dep",
+    ),
+    // References anchored at the SHARED definition site: once the synthetic
+    // Scala 3 namespace declares dependsOn on its origin namespace, the
+    // target graph connects and references should include the Scala 3 caller
+    // (MBT finding MORE than BSP here is the improvement, judged in triage).
+    Probe(
+      s"$scala2Dir/DependencyAnalyzerSettings.scala",
+      "def parse@@Settings",
+      DiffFeature.References,
+      note = "references of parseSettings: BSP sees only the active Scala 2"
+        + " caller; MBT should additionally find the inactive Scala 3 caller"
+        + " once the unconfigured-sources namespace dependsOn its origin",
+      category = "multi-version,cross-namespace",
     ),
   )
 
