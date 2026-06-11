@@ -109,12 +109,12 @@ abstract class BazelMbtImporter(
       selectAwareSrcsOutput <- BazelQuery
         .selectAwareSrcsQuery(targets)
         .run(queryEnv)
-      inactiveSourceVersions = BazelBuildSrcs.inactiveSourceVersions(
+      inactiveSources = BazelBuildSrcs.inactiveSources(
         selectAwareSrcsOutput,
         scalaVersionByTarget,
       )
       _ = scribe.info(
-        s"bazel-mbt: ${inactiveSourceVersions.size} version-specific sources " +
+        s"bazel-mbt: ${inactiveSources.size} version-specific sources " +
           "from inactive select() branches"
       )
       build = BazelMbtBuildSupport.fromDiscovery(
@@ -129,7 +129,7 @@ abstract class BazelMbtImporter(
         classDirectories,
         dependencyModules,
         scalaVersionByTarget,
-        inactiveSourceVersions,
+        inactiveSources,
       )
       _ <- Future(Files.writeString(out.toNIO, MbtBuild.toJson(build)))
     } yield ()

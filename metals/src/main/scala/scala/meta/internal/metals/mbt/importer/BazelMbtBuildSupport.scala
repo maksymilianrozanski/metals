@@ -30,16 +30,6 @@ object BazelMbtBuildSupport {
 
   private val workspaceNamespaceName: String = "bazel-workspace"
 
-  /**
-   * Namespace holding sources from inactive `select()` branches (e.g. the
-   * Scala 3 branch of a `select_for_scala_version` target when the default
-   * configuration is Scala 2). Tagged with the Scala version of the branch the
-   * sources came from; when several branch versions are present each gets its
-   * own `<name>-<version>` namespace.
-   */
-  private val unconfiguredSourcesNamespaceName: String =
-    "bazel-unconfigured-sources"
-
   def fromDiscovery(
       granularity: BazelMbtNamespaceMode,
       targetLabels: List[String],
@@ -52,7 +42,7 @@ object BazelMbtBuildSupport {
       classDirectoriesByTarget: Map[String, String],
       dependencyModules: Seq[MbtDependencyModule],
       scalaVersionByTarget: Map[String, Option[String]],
-      inactiveSourceVersions: Map[String, String],
+      inactiveSources: Map[String, BazelBuildSrcs.InactiveSource],
   ): MbtBuild = {
     val depModules = new ju.ArrayList[MbtDependencyModule]()
     dependencyModules.foreach(depModules.add)
@@ -63,12 +53,14 @@ object BazelMbtBuildSupport {
     // `bazel query` flattens every `select()` branch into `srcs`, so a target
     // that cross-compiles (e.g. `select_for_scala_version`) reports source
     // files of Scala versions it is not built with in the default
-    // configuration. `inactiveSourceVersions` (from [[BazelBuildSrcs]]) maps
-    // each such source to the Scala version of the `select()` branch it came
-    // from, so they can be grouped into per-version namespaces and tagged with
-    // their real Scala version (e.g. Scala 3 sources open with a Scala 3
-    // compiler) regardless of which targets happen to be in import scope.
-    val isInactiveSource: String => Boolean = inactiveSourceVersions.contains
+    // configuration. `inactiveSources` (from [[BazelBuildSrcs]]) maps each
+    // such source to the Scala version of the `select()` branch it came from
+    // and to the target declaring it, so they can be grouped into namespaces
+    // mirroring the configuration Bazel would actually compile them in — the
+    // origin target built with that Scala version — tagged with their real
+    // Scala version (e.g. Scala 3 sources open with a Scala 3 compiler)
+    // regardless of which targets happen to be in import scope.
+    val isInactiveSource: String => Boolean = inactiveSources.contains
     if (targetLabels.isEmpty) {
       if (granularity == BazelMbtNamespaceMode.Workspace) {
         MbtBuild(
@@ -112,20 +104,29 @@ object BazelMbtBuildSupport {
             fileLabelToWorkspaceRelativePath
           )
       }
-      // Inactive sources grouped by the Scala version of the `select()` branch
-      // they belong to; each group becomes its own namespace tagged with that
-      // version.
-      val inactiveFilesByVersion: Map[String, Set[String]] =
-        srcsByTarget.values.flatten.toSet.toList
-          .flatMap { (label: String) =>
-            inactiveSourceVersions
-              .get(label)
-              .flatMap { version =>
-                fileLabelToWorkspaceRelativePath(label).map(version -> _)
-              }
-          }
-          .groupBy(_._1)
-          .map { case (version, pairs) => version -> pairs.map(_._2).toSet }
+      // Inactive sources grouped by (origin namespace, branch version); each
+      // group becomes its own namespace modelling the configuration in which
+      // Bazel would actually compile those sources — the origin target built
+      // with that Scala version — so it can inherit the origin's
+      // dependencies instead of being an island.
+      val inactiveFilesByGroup =
+        mutable.Map.empty[(String, String), mutable.Set[String]]
+      val inactiveOriginsByGroup =
+        mutable.Map.empty[(String, String), mutable.Set[String]]
+      for {
+        label <- srcsByTarget.values.flatten.toSet[String]
+        inactive <- inactiveSources.get(label)
+        path <- fileLabelToWorkspaceRelativePath(label)
+      } {
+        val group =
+          (
+            namespaceKey(granularity, inactive.originTarget),
+            inactive.version,
+          )
+        inactiveFilesByGroup.getOrElseUpdate(group, mutable.Set.empty) += path
+        inactiveOriginsByGroup.getOrElseUpdate(group, mutable.Set.empty) +=
+          inactive.originTarget
+      }
       val namespaces = new ju.LinkedHashMap[String, MbtNamespace]()
 
       if (granularity == BazelMbtNamespaceMode.BuildFile) {
@@ -212,21 +213,34 @@ object BazelMbtBuildSupport {
           wsScalaVersion,
         )
       }
-      // Keep the plain namespace name in the common single-version case; only
-      // disambiguate with a `-<version>` suffix when several versions coexist.
-      val singleInactiveVersion = inactiveFilesByVersion.size == 1
-      for ((version, files) <- inactiveFilesByVersion.toSeq.sortBy(_._1)) {
-        val namespaceName =
-          if (singleInactiveVersion) unconfiguredSourcesNamespaceName
-          else s"$unconfiguredSourcesNamespaceName-$version"
+      // Named `<origin namespace>@<version>` — namespace names are opaque to
+      // every consumer (they only become `mbt://namespace/<name>` ids), and
+      // the suffix cannot collide with a real namespace key. The namespace
+      // depends on its origin namespace (the unconditional `srcs` of the
+      // origin target — compiled together with these sources in the real
+      // cross-build — live there) plus the origin's cross-namespace deps, and
+      // inherits the external modules of the origin targets. scalacOptions
+      // are deliberately NOT copied: the origin's flags target a different
+      // Scala version.
+      for (
+        ((originKey, version), files) <-
+          inactiveFilesByGroup.toSeq.sortBy { case (group, _) => group }
+      ) {
+        val origins = inactiveOriginsByGroup(originKey -> version).toSet
+        val externalDeps =
+          origins.flatMap(externalDepsByTarget.getOrElse(_, Nil))
+        val dependsOn =
+          dependsByNs.getOrElse(originKey, Set.empty) ++
+            (if (namespaces.containsKey(originKey)) Set(originKey)
+             else Set.empty)
         putNamespace(
           namespaces,
-          namespaceName,
-          files,
+          s"$originKey@$version",
+          files.toSet,
           Nil,
           Nil,
-          Set.empty,
-          Set.empty,
+          dependsOn,
+          externalDeps,
           Set.empty,
           None,
           Some(version),

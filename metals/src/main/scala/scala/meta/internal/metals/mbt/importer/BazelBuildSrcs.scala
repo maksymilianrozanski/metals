@@ -1,10 +1,11 @@
 package scala.meta.internal.metals.mbt.importer
 
 import scala.collection.mutable
-import scala.meta.internal.semver.SemVer
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
+
+import scala.meta.internal.semver.SemVer
 
 /**
  * Recovers, per target, which source files belong to which Scala version from
@@ -35,34 +36,55 @@ object BazelBuildSrcs {
   }
 
   /**
+   * The Scala version of the `select()` branch an inactive source came from,
+   * together with the target declaring that branch. The origin target is what
+   * lets the importer model the configuration in which Bazel would actually
+   * compile the source — the origin target built with [[version]] — so the
+   * source's namespace can inherit the origin's dependencies.
+   */
+  case class InactiveSource(version: String, originTarget: String)
+
+  /**
    * Source labels that belong to a `scala_version` `select()` branch that does
    * not match their target's resolved Scala version (and are not compiled by
-   * any other target either), each mapped to that branch's Scala version. These
-   * are the sources whose version cannot be identified from the default
-   * configuration; recovering the branch version lets the caller tag them with
-   * their real Scala version (e.g. a Scala 3 source from a
-   * `select_for_scala_version(any_3 = ...)` branch) instead of guessing from
+   * any other target either), each mapped to that branch's Scala version and
+   * origin target. These are the sources whose version cannot be identified
+   * from the default configuration; recovering the branch version lets the
+   * caller tag them with their real Scala version (e.g. a Scala 3 source from
+   * a `select_for_scala_version(any_3 = ...)` branch) instead of guessing from
    * the project-wide set of versions. When a label appears in several inactive
-   * branches the highest version wins. Targets whose `srcs` cannot be parsed
-   * simply do not contribute, so they are never misclassified as inactive.
+   * branches the highest version wins, and among targets declaring that
+   * version the lexicographically smallest label, so the result is
+   * deterministic. Targets whose `srcs` cannot be parsed simply do not
+   * contribute, so they are never misclassified as inactive.
    */
-  def inactiveSourceVersions(
+  def inactiveSources(
       queryOutput: String,
       scalaVersionByTarget: Map[String, Option[String]],
-  ): Map[String, String] = {
+  ): Map[String, InactiveSource] = {
     val byTarget = parse(queryOutput)
     val active = byTarget.flatMap { case (target, srcs) =>
       srcs.activeFor(scalaVersionByTarget.getOrElse(target, None))
     }.toSet
-    val versionsByLabel = mutable.Map.empty[String, mutable.Set[String]]
+    val candidatesByLabel =
+      mutable.Map.empty[String, mutable.Set[(String, String)]]
     for {
-      srcs <- byTarget.values
+      (target, srcs) <- byTarget
       (version, labels) <- srcs.byVersion
       label <- labels
       if !active.contains(label)
-    } versionsByLabel.getOrElseUpdate(label, mutable.Set.empty) += version
-    versionsByLabel.flatMap { case (label, versions) =>
-      versions.maxByOption(SemVer.Version.fromString).map(label -> _)
+    } candidatesByLabel.getOrElseUpdate(label, mutable.Set.empty) +=
+      (version -> target)
+    candidatesByLabel.flatMap { case (label, candidates) =>
+      candidates
+        .map { case (version, _) => version }
+        .maxByOption(SemVer.Version.fromString)
+        .map { version =>
+          val origin = candidates.collect { case (`version`, target) =>
+            target
+          }.min
+          label -> InactiveSource(version, origin)
+        }
     }.toMap
   }
 
