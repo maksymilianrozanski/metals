@@ -178,3 +178,6 @@ cross-target symbols", which is the actionable unit a fix targets.
 - `references/high-risk-catalog.md` — catalog of high-risk patterns with the
   grep/find that surfaces each and why MBT fails there.
 - `assets/DifferentialSuiteTemplate.scala` — copy-and-fill suite template.
+
+For the framework's design spec, tradeoffs, and the coupling/decoupling decision,
+see `tests/slow/src/test/scala/tests/bazel/MBT_DIFFERENTIAL_TESTING.md`.
