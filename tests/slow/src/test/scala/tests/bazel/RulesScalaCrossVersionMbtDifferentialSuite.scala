@@ -1,5 +1,7 @@
 package tests.bazel
 
+import scala.concurrent.duration.Duration
+
 import scala.meta.io.AbsolutePath
 
 /**
@@ -31,6 +33,11 @@ import scala.meta.io.AbsolutePath
  */
 class RulesScalaCrossVersionMbtDifferentialSuite
     extends BaseRealRepoMbtSuite("rules-scala-cross-version-mbt-diff") {
+
+  // The BSP oracle phase runs bazelbsp's aspect build over the scope; the
+  // protobuf-heavy reporter package can take well over the default 10 minutes
+  // when that aspect configuration is cold.
+  override def munitTimeout: Duration = Duration("40min")
 
   override def repoDir: AbsolutePath =
     AbsolutePath(
