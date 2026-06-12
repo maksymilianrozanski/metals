@@ -15,6 +15,14 @@ class BazelTargetsXmlDump(xmlDump: String) {
     targetLabels.toMap
   }
 
+  /**
+   * Source-providing filegroup targets in the dump. Their `srcs` are inlined
+   * into consuming targets by [[getLabels]] (flattening any `select()`), so a
+   * select()-aware query must visit the filegroups THEMSELVES to recover
+   * which of the inlined sources belong to inactive branches.
+   */
+  lazy val filegroupLabels: Set[String] = filegroupSrcLabelsByTarget.keySet
+
   def getLabels(attributeName: String): Map[String, List[String]] = {
     val targetLabels = for {
       rule <- root \\ "rule"

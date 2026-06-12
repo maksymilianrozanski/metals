@@ -11,6 +11,7 @@ import scala.meta.internal.metals.Configs.DefinitionProviderConfig
 import scala.meta.internal.metals.Configs.ProtobufLspConfig
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals.PositionSyntax._
+import scala.meta.internal.metals.mbt.MbtBuild
 import scala.meta.internal.metals.mbt.MbtWorkspaceSymbolProvider
 import scala.meta.internal.mtags.GlobalSymbolIndex
 import scala.meta.internal.mtags.KeywordWrapper.Scala3SoftKeywords
@@ -491,7 +492,9 @@ class DestinationProvider(
       symbol: String,
       allowedBuildTargets: Set[BuildTargetIdentifier],
   ): Option[SymbolDefinition] = {
-    val definitions = index.definitions(Symbol(symbol)).filter(_.path.exists)
+    val definitions = rankMbtCandidates(
+      index.definitions(Symbol(symbol)).filter(_.path.exists)
+    )(_.path)
     val result =
       if (allowedBuildTargets.isEmpty)
         definitions.headOption
@@ -509,8 +512,41 @@ class DestinationProvider(
     result.orElse(definitionFromMbt(symbol))
   }
 
+  /**
+   * When several workspace files define the same symbol and some belong to a
+   * synthetic `<origin>@<version>` namespace (sources of an inactive Bazel
+   * cross-version `select()` branch — e.g. per-Scala-version copies of the
+   * same Java class), prefer the copies the build actually compiles: sources
+   * of a real namespace first, inactive-branch sources next, files outside
+   * any build target last; ties break by path for determinism. Candidate
+   * lists without inactive-branch members are returned untouched, so
+   * non-Bazel-MBT resolution order is unaffected.
+   */
+  private def rankMbtCandidates[T](
+      candidates: List[T]
+  )(pathOf: T => AbsolutePath): List[T] = {
+    def targetIds(candidate: T): List[BuildTargetIdentifier] =
+      sourceBuildTargets(pathOf(candidate))
+    def isVersionBranch(candidate: T): Boolean = {
+      val ids = targetIds(candidate)
+      ids.nonEmpty &&
+      ids.forall(id => MbtBuild.isVersionBranchNamespaceUri(id.getUri))
+    }
+    if (candidates.lengthCompare(1) <= 0 || !candidates.exists(isVersionBranch))
+      candidates
+    else
+      candidates.sortBy { candidate =>
+        val score =
+          if (isVersionBranch(candidate)) 1
+          else if (targetIds(candidate).nonEmpty) 0
+          else 2
+        (score, pathOf(candidate).toString)
+      }
+  }
+
   private def definitionFromMbt(symbol: String): Option[SymbolDefinition] = {
-    val mbtDefinitions = mbt.definition(symbol)
+    val mbtDefinitions =
+      rankMbtCandidates(mbt.definition(symbol))(_.getUri.toAbsolutePath)
     scribe.info(
       s"MBT fallback for symbol $symbol: found ${mbtDefinitions.size} definitions"
     )

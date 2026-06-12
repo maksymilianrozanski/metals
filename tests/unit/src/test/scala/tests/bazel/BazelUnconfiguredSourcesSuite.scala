@@ -117,6 +117,98 @@ class BazelUnconfiguredSourcesSuite extends BaseSuite {
     assertEquals(result, Map.empty[String, InactiveSource])
   }
 
+  test("filegroup-branches-segregate-cross-version-copies-from-consumer") {
+    // A source-providing filegroup cross-compiles the same class per Scala
+    // version; the consumer's (flattened) srcs contain EVERY copy. The
+    // filegroup's own select() recovers which copies are inactive, and they
+    // leave the consumer namespace for the filegroup's @version namespace.
+    val queryOutput = List(
+      selectRule(
+        "//pkg/fg:fg",
+        v2_12 -> List("//pkg/fg:active/A.java"),
+        v3_8 -> List("//pkg/fg:scala_3/A.java"),
+      ),
+      plainRule("//pkg/consumer:lib", List("//pkg/consumer:Consumer.scala")),
+    ).mkString("\n")
+    val scalaVersions: Map[String, Option[String]] = Map(
+      "//pkg/consumer:lib" -> Some("2.12.21"),
+      "//pkg/fg:fg" -> Some("2.12.21"),
+    )
+    val inactive = BazelBuildSrcs.inactiveSources(queryOutput, scalaVersions)
+    assertEquals(
+      inactive,
+      Map("//pkg/fg:scala_3/A.java" -> InactiveSource("3.8.3", "//pkg/fg:fg")),
+    )
+
+    val build = BazelMbtBuildSupport.fromDiscovery(
+      granularity = BazelMbtNamespaceMode.BuildFile,
+      targetLabels = List("//pkg/consumer:lib"),
+      // The xml dump inlines the filegroup's flattened srcs into the consumer.
+      srcsByTarget = Map(
+        "//pkg/consumer:lib" -> List(
+          "//pkg/consumer:Consumer.scala",
+          "//pkg/fg:active/A.java",
+          "//pkg/fg:scala_3/A.java",
+        )
+      ),
+      scalacOptionsByTarget = Map.empty,
+      javacOptionsByTarget = Map.empty,
+      directDepRules = Map.empty,
+      externalDepsByTarget = Map.empty,
+      runTargets = Set.empty,
+      classDirectoriesByTarget = Map.empty,
+      dependencyModules = Nil,
+      scalaVersionByTarget = scalaVersions,
+      inactiveSources = inactive,
+    )
+    val namespaces = build.getNamespaces.asScala
+    assertEquals(
+      namespaces.keySet,
+      Set("//pkg/consumer", "//pkg/fg@3.8.3"),
+    )
+    // The consumer keeps its own source plus the ACTIVE copy only.
+    assertEquals(
+      namespaces("//pkg/consumer").getSources.asScala.toList,
+      List("pkg/consumer/Consumer.scala", "pkg/fg/active/A.java"),
+    )
+    assertEquals(
+      namespaces("//pkg/fg@3.8.3").getSources.asScala.toList,
+      List("pkg/fg/scala_3/A.java"),
+    )
+  }
+
+  test("version-branch-namespace-uri-detection") {
+    import scala.meta.internal.metals.mbt.MbtBuild
+    assert(
+      MbtBuild.isVersionBranchNamespaceUri(
+        MbtBuild.namespaceTargetId("//pkg/fg@3.8.4")
+      )
+    )
+    assert(
+      MbtBuild.isVersionBranchNamespaceUri(
+        MbtBuild.namespaceTargetId("//pkg@2.12.21")
+      )
+    )
+    assert(
+      !MbtBuild.isVersionBranchNamespaceUri(
+        MbtBuild.namespaceTargetId("//pkg/fg")
+      )
+    )
+    assert(
+      !MbtBuild.isVersionBranchNamespaceUri(
+        MbtBuild.namespaceTargetId("bazel-workspace")
+      )
+    )
+    // An external-repo label's leading @ is not a version-branch suffix.
+    assert(
+      !MbtBuild.isVersionBranchNamespaceUri(
+        MbtBuild.namespaceTargetId("@repo//pkg:t")
+      )
+    )
+    // Only mbt namespace ids qualify.
+    assert(!MbtBuild.isVersionBranchNamespaceUri("file:///pkg@3.8.4"))
+  }
+
   test("from-discovery-unconfigured-namespace-inherits-origin-edges") {
     val build = BazelMbtBuildSupport.fromDiscovery(
       granularity = BazelMbtNamespaceMode.BuildFile,

@@ -99,7 +99,14 @@ abstract class BazelMbtImporter(
           .orElse(
             scalaVersions.values.flatten.toSeq.maxByOption(Version.fromString)
           )
-      scalaVersionByTarget = targets.map { target =>
+      // Source-providing filegroups are inlined into consuming targets'
+      // `srcs` by the (flattened) xml dump, losing their select() branches —
+      // query the filegroups themselves so cross-version sources they
+      // declare (e.g. per-Scala-version copies of a Java class) can be told
+      // apart. They resolve with the default configuration like any
+      // unpinned target.
+      filegroupLabels = targetsXmlDump.filegroupLabels.toList.sorted
+      scalaVersionByTarget = (targets ++ filegroupLabels).map { target =>
         val targetScalaVersion = scalaVersions
           .get(target)
           .flatMap(_.maxByOption(Version.fromString))
@@ -107,7 +114,7 @@ abstract class BazelMbtImporter(
         target -> targetScalaVersion
       }.toMap
       selectAwareSrcsOutput <- BazelQuery
-        .selectAwareSrcsQuery(targets)
+        .selectAwareSrcsQuery((targets ++ filegroupLabels).distinct)
         .run(queryEnv)
       inactiveSources = BazelBuildSrcs.inactiveSources(
         selectAwareSrcsOutput,

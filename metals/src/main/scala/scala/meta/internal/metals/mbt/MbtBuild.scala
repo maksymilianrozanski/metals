@@ -185,6 +185,20 @@ object MbtBuild {
     s"mbt://namespace/$name"
   }
 
+  private val versionBranchSuffix = """@\d+(\.\d+)+$""".r
+
+  /**
+   * Whether a build target id names a synthetic `<origin>@<scala version>`
+   * namespace — sources from an inactive cross-version `select()` branch
+   * (the Bazel importer's naming; see `BazelMbtBuildSupport`). Such sources
+   * are NOT compiled in the default configuration, so when a symbol is also
+   * defined by a source of a real namespace, the real one is the better
+   * definition target.
+   */
+  def isVersionBranchNamespaceUri(uri: String): Boolean =
+    uri.startsWith("mbt://namespace/") &&
+      versionBranchSuffix.findFirstIn(uri).nonEmpty
+
   /**
    * Merge two [[MbtBuild]] values produced by different importers.
    *
