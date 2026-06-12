@@ -30,7 +30,7 @@ repo="${MBT_SWEEP_REPO:-/Volumes/colimavol/rules_scala}"
 sweep_dir="${MBT_SWEEP_DIR:-$metals_root/tests/slow/target/mbt-sweep}"
 max_idents="${MBT_SWEEP_MAX_IDENTS:-500}"
 targets="${MBT_SWEEP_TARGETS:-//third_party/dependency_analyzer/... //src/java/io/bazel/rulesscala/scalac/reporter/...}"
-files="${MBT_SWEEP_FILES:-third_party/dependency_analyzer/src/main/io/bazel/rulesscala/dependencyanalyzer/DependencyAnalyzer.scala third_party/dependency_analyzer/src/main/io/bazel/rulesscala/dependencyanalyzer3/DependencyAnalyzer.scala third_party/dependency_analyzer/src/main/io/bazel/rulesscala/dependencyanalyzer/DependencyAnalyzerSettings.scala}"
+files="${MBT_SWEEP_FILES:-third_party/dependency_analyzer/src/main/io/bazel/rulesscala/dependencyanalyzer/DependencyAnalyzer.scala third_party/dependency_analyzer/src/main/io/bazel/rulesscala/dependencyanalyzer3/DependencyAnalyzer.scala third_party/dependency_analyzer/src/main/io/bazel/rulesscala/dependencyanalyzer/DependencyAnalyzerSettings.scala third_party/dependency_analyzer/src/test/io/bazel/rulesscala/dependencyanalyzer/ScalaVersionTest.scala}"
 
 repo_sha="$(git -C "$repo" rev-parse --short HEAD)"
 metals_sha="$(git -C "$metals_root" rev-parse --short HEAD)"

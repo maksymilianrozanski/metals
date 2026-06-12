@@ -8,7 +8,9 @@ import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 
 import scala.meta.internal.io.PathIO
+import scala.meta.internal.metals.ClientCommands
 import scala.meta.internal.metals.HoverExtParams
+import scala.meta.internal.metals.InitializationOptions
 import scala.meta.internal.metals.Messages
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.io.AbsolutePath
@@ -38,6 +40,14 @@ class RepoSweepCollectorSuite extends BaseRealRepoMbtSuite("repo-sweep") {
 
   // Cold bazelbsp aspect builds can take well over the default 10 minutes.
   override def munitTimeout: Duration = Duration("40min")
+
+  // Run/debug code lenses and UpdateTestExplorer notifications are only
+  // produced for clients that declare the capabilities.
+  override protected def initializationOptions: Option[InitializationOptions] =
+    Some(
+      InitializationOptions.Default
+        .copy(testExplorerProvider = Some(true), debuggingProvider = Some(true))
+    )
 
   private val configPath: Path =
     PathIO.workingDirectory
@@ -138,7 +148,10 @@ class RepoSweepCollectorSuite extends BaseRealRepoMbtSuite("repo-sweep") {
       ) { (acc, file) =>
         acc.flatMap(sofar => sweepFile(file, c).map(sofar ++ _))
       }
-    } yield records
+      // Test discovery is push-based and can trail compilation; give the
+      // accumulated UpdateTestExplorer notifications a moment to settle.
+      _ <- server.waitFor(2000)
+    } yield records :+ testExplorerRecord()
 
   private def sweepFile(
       file: String,
@@ -147,11 +160,6 @@ class RepoSweepCollectorSuite extends BaseRealRepoMbtSuite("repo-sweep") {
     val path = server.toPath(file)
     val text = path.readText
     val tdi = path.toTextDocumentIdentifier
-    val fileLevel = List(
-      diagnosticsRecord(file, path),
-      semanticTokensRecord(file, tdi, text),
-      documentSymbolRecord(file),
-    )
     val idents = MbtSweep.identifiers(text, c.maxIdentsPerFile)
     val identRecords = idents.foldLeft(
       Future.successful(List.empty[MbtSweep.SweepRecord])
@@ -180,7 +188,17 @@ class RepoSweepCollectorSuite extends BaseRealRepoMbtSuite("repo-sweep") {
     }
     for {
       perIdent <- identRecords
-      perFile <- Future.sequence(fileLevel)
+      // File-level captures run AFTER the identifier sweep: the minutes it
+      // takes give diagnostics, the lens model and test discovery time to
+      // settle for this file.
+      perFile <- Future.sequence(
+        List(
+          diagnosticsRecord(file, path),
+          semanticTokensRecord(file, tdi, text),
+          documentSymbolRecord(file),
+          codeLensRecord(file),
+        )
+      )
     } yield perFile ++ perIdent
   }
 
@@ -241,4 +259,52 @@ class RepoSweepCollectorSuite extends BaseRealRepoMbtSuite("repo-sweep") {
       .map(_.trim)
       .recover(renderError)
       .map(MbtSweep.SweepRecord(file, "documentSymbol", -1, -1, "", _))
+
+  /**
+   * The run/debug/test lenses a client would display for this file (the "Run"
+   * above a main method, the test-suite lenses). Single-shot:
+   * `minExpectedLenses = 0` returns whatever the server has right now — most
+   * library files legitimately have none.
+   */
+  private def codeLensRecord(file: String): Future[MbtSweep.SweepRecord] =
+    server
+      .codeLenses(file, maxRetries = 0, minExpectedLenses = 0)
+      .map { lenses =>
+        val rendered = lenses.map { lens =>
+          val start = lens.getRange.getStart
+          val title =
+            Option(lens.getCommand).map(_.getTitle).getOrElse("<unresolved>")
+          s"${start.getLine}:${start.getCharacter} <<$title>>"
+        }.sorted
+        if (rendered.isEmpty) "<empty>" else rendered.mkString("\n")
+      }
+      .recover(renderError)
+      .map(MbtSweep.SweepRecord(file, "codeLens", -1, -1, "", _))
+
+  /**
+   * Everything the Test Explorer UI (the arrows next to test cases) would
+   * have been told: the accumulated `UpdateTestExplorer` client commands.
+   * One workspace-level record; absolute workspace URIs/paths are normalized
+   * so the record diffs cleanly across modes.
+   */
+  private def testExplorerRecord(): MbtSweep.SweepRecord = {
+    val workspaceUri = repoDir.toNIO.toUri.toString
+    val rendered = client.clientCommands.asScala.toList
+      .filter(_.getCommand == ClientCommands.UpdateTestExplorer.id)
+      .flatMap(_.getArguments().asScala)
+      .map(
+        _.toString
+          .replace(workspaceUri, "ws:/")
+          .replace(repoDir.toString, "ws:")
+      )
+      .sorted
+    MbtSweep.SweepRecord(
+      "<workspace>",
+      "testExplorer",
+      -1,
+      -1,
+      "",
+      if (rendered.isEmpty) "<empty>" else rendered.mkString("\n"),
+    )
+  }
 }

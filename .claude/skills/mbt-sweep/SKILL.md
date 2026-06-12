@@ -20,11 +20,16 @@ Three components, all in this repo:
   (`tests/slow/src/test/scala/tests/bazel/`): imports the target repo through
   the real Metals server under ONE mode (`bsp` = bazelbsp oracle, `mbt` =
   under test) and sweeps the configured files. Per file: one `diagnostics`,
-  one `semanticTokens`, one `documentSymbol` record, plus `definition` and
+  one `semanticTokens`, one `documentSymbol`, one `codeLens` record (the
+  run/debug/test lenses a client would display — captured single-shot after
+  the identifier sweep so the lens model has settled), plus `definition` and
   `hover` at every identifier token (scalameta-tokenized; literals, comments
-  and keywords are never probed; capped per file, evenly spread). Output: a
-  JSON-lines snapshot — first line metadata (mode, repoHead, metalsHead),
-  then one record per observation keyed by `(file, kind, line, col, ident)`.
+  and keywords are never probed; capped per file, evenly spread). One
+  workspace-level `testExplorer` record captures the accumulated
+  `UpdateTestExplorer` client notifications (what drives the test arrows in
+  VS Code), with workspace URIs normalized. Output: a JSON-lines snapshot —
+  first line metadata (mode, repoHead, metalsHead), then one record per
+  observation keyed by `(file, kind, line, col, ident)`.
 - **Differ** — `tests.bazel.SweepDiff` (same file as `MbtSweep`): pairs two
   snapshots by key, classifies each pair, writes `sweep-diff.md` (triage
   view: summary, per-file/kind counts, full non-MATCH detail capped at 300)
@@ -83,6 +88,19 @@ drift). Judgment rules learned from differential testing here:
   `BSP_EMPTY` = MBT-only diagnostics (usually an MBT bug).
 - **`semanticTokens` empty on one side** = that side's PC is effectively dead
   for the file, whatever individual probes say.
+- **`codeLens` is single-shot** (no retry loop): `BOTH_EMPTY` on library
+  files is correct (no main/test); an asymmetric empty on a main/test file is
+  a finding but verify once by re-running before reporting (lens computation
+  can trail the model refresh). `testExplorer` compares what the client was
+  TOLD, in both modes — `BOTH_EMPTY` means neither side ran test discovery
+  for the scope (no differential signal, possibly a product gap worth
+  noting); these kinds validate the server-side data behind the VS Code
+  "Run" lenses and test arrows, not the UI itself.
+- **Include at least one TEST source file** in `MBT_SWEEP_FILES`: test
+  namespaces have different classpath/dependency wiring than main ones and
+  fail differently (first sweep with one test file immediately surfaced
+  MBT-empty navigation across the whole file, stdlib included, where BSP
+  resolves everything).
 - To compare two MBT candidates (before vs after a change), diff each against
   the same BSP baseline and compare the two `sweep-diff.json` files (e.g. with
   `jq`) — do not SweepDiff two `mbt` snapshots directly: both sides would be
