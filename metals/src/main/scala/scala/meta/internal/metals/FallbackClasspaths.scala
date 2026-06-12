@@ -17,11 +17,11 @@ import ch.epfl.scala.bsp4j.MavenDependencyModule
 
 trait BaseFallbackClasspaths {
   def javaCompilerClasspath(): Seq[Path]
-  def scalaCompilerClasspath(): Seq[Path]
+  def scalaCompilerClasspath(scalaVersion: String): Seq[Path]
 }
 object EmptyFallbackClasspaths extends BaseFallbackClasspaths {
   override def javaCompilerClasspath(): Seq[Path] = Nil
-  override def scalaCompilerClasspath(): Seq[Path] = Nil
+  override def scalaCompilerClasspath(scalaVersion: String): Seq[Path] = Nil
 }
 
 /**
@@ -109,8 +109,9 @@ class FallbackClasspaths(
       scalaVersionSelector.fallbackScalaVersion()
     ScalaVersions.scalaBinaryVersionFromFullVersion(scalaVersion)
   }
-  def scalaCompilerClasspath(): Seq[Path] = {
-    val scalaBinaryVerion = fallbackScalaBinaryVersion()
+  def scalaCompilerClasspath(scalaVersion: String): Seq[Path] = {
+    val scalaBinaryVerion =
+      ScalaVersions.scalaBinaryVersionFromFullVersion(scalaVersion)
     fallbackCompilerClasspath(
       id =>
         // IMPORTANT: we must only include dependencies from targets that have a
