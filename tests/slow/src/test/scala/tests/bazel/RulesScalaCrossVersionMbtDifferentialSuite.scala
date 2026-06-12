@@ -180,6 +180,33 @@ class RulesScalaCrossVersionMbtDifferentialSuite
         + " (external dependency navigation via dependencyModules)",
       category = "multi-version,external-dep",
     ),
+    Probe(
+      s"$scala3Dir/DependencyAnalyzer.scala",
+      "keys.to@@Set.asJava",
+      DiffFeature.Hover,
+      note = "hover at the same Scala 3 stdlib position — discriminates"
+        + " 'PC cannot type the file' from 'definition-into-jar mapping gap'",
+      category = "multi-version,external-dep",
+    ),
+    // Stdlib/scala-reflect navigation from the ACTIVE Scala 2 file: an
+    // import position needs only the classpath (now carrying the toolchain
+    // compiler bundle) and the indexed sources jars — the cleanest signal
+    // for external-dependency navigation under the Scala 2 MBT PC.
+    Probe(
+      s"$scala2Dir/DependencyAnalyzer.scala",
+      "io.Abstract@@File",
+      DiffFeature.Definition,
+      note = "Scala 2 active-branch file -> scala.reflect.io.AbstractFile"
+        + " (toolchain compiler-bundle jar; expect scala-reflect-sources)",
+      category = "external-dep",
+    ),
+    Probe(
+      s"$scala2Dir/DependencyAnalyzer.scala",
+      "io.Abstract@@File",
+      DiffFeature.Hover,
+      note = "hover on the same scala-reflect import",
+      category = "external-dep",
+    ),
     // References anchored at the SHARED definition site: once the synthetic
     // Scala 3 namespace declares dependsOn on its origin namespace, the
     // target graph connects and references should include the Scala 3 caller
