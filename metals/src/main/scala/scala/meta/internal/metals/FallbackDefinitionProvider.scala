@@ -19,6 +19,9 @@ import org.eclipse.lsp4j.{Range => LspRange}
 class FallbackDefinitionProvider(
     trees: Trees,
     index: GlobalSymbolIndex,
+    rankCandidates: List[mtags.SymbolDefinition] => List[
+      mtags.SymbolDefinition
+    ] = identity,
 ) {
 
   /**
@@ -128,11 +131,13 @@ class FallbackDefinitionProvider(
           guessObjectOrClass(proposedNameParts)
 
         def findInIndex(proposedSymbol: String) = try {
-          index
-            .definition(mtags.Symbol(proposedSymbol))
-            // Make sure we don't return unrelated definitions
-            .filter { _.definitionSymbol.value == proposedSymbol }
-
+          rankCandidates(
+            index
+              .definitions(mtags.Symbol(proposedSymbol))
+              .filter(_.path.exists)
+              // Make sure we don't return unrelated definitions
+              .filter(_.definitionSymbol.value == proposedSymbol)
+          ).headOption
         } catch {
           // If invalid symbol we guessed wrong
           case _: mtags.IndexingExceptions.InvalidSymbolException => None

@@ -72,7 +72,12 @@ final class DefinitionProvider(
     protobufLspConfig: () => ProtobufLspConfig,
 )(implicit ec: ExecutionContext, rc: ReportContext) {
 
-  private val fallback = new FallbackDefinitionProvider(trees, index)
+  private val fallback =
+    new FallbackDefinitionProvider(
+      trees,
+      index,
+      candidates => destinationProvider.rankMbtCandidates(candidates)(_.path),
+    )
   private val protobufDefinitions = new DefinitionProviderProtobufSupport(
     workspace,
     buffers,
@@ -522,7 +527,7 @@ class DestinationProvider(
    * lists without inactive-branch members are returned untouched, so
    * non-Bazel-MBT resolution order is unaffected.
    */
-  private def rankMbtCandidates[T](
+  def rankMbtCandidates[T](
       candidates: List[T]
   )(pathOf: T => AbsolutePath): List[T] = {
     def targetIds(candidate: T): List[BuildTargetIdentifier] =
