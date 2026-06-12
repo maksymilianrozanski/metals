@@ -177,20 +177,23 @@ abstract class BazelMbtImporter(
         s"bazel-mbt: resolved ${toolchain.modules.size} Scala toolchain " +
           s"modules for versions ${libraryVersions.toSeq.sorted.mkString(", ")}"
       )
-      build = BazelMbtBuildSupport.fromDiscovery(
-        namespaceMode,
-        targets,
-        srcs,
-        scalacOptions,
-        javacOptions,
-        deps,
-        externalDepModules,
-        runTargets,
-        classDirectories,
-        dependencyModules,
-        scalaVersionByTarget,
-        inactiveSources,
-        toolchain,
+      build = BazelSrcjarSources.materializeAll(
+        workspace,
+        BazelMbtBuildSupport.fromDiscovery(
+          namespaceMode,
+          targets,
+          srcs,
+          scalacOptions,
+          javacOptions,
+          deps,
+          externalDepModules,
+          runTargets,
+          classDirectories,
+          dependencyModules,
+          scalaVersionByTarget,
+          inactiveSources,
+          toolchain,
+        ),
       )
       _ <- Future(Files.writeString(out.toNIO, MbtBuild.toJson(build)))
     } yield ()
