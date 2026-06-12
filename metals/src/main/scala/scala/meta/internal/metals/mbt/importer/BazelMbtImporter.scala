@@ -143,10 +143,35 @@ abstract class BazelMbtImporter(
             if compilerClasspathTargets(origin) =>
           version
       }).toSet
+      // scala_test targets additionally compile against scalatest/scalactic
+      // from the rules_scala testing toolchain — materialized (with sources)
+      // in the output base, so discovered there rather than resolved.
+      testTargets = targets.filter { target =>
+        targetsXmlDump.ruleClassesByTarget.get(target).contains("scala_test")
+      }.toSet
+      testingVersions = (scalaVersionByTarget.collect {
+        case (target, Some(version)) if testTargets(target) => version
+      } ++ inactiveSources.values.collect {
+        case BazelBuildSrcs.InactiveSource(version, origin)
+            if testTargets(origin) =>
+          version
+      }).toSet
+      testingModulesByVersion =
+        if (testTargets.isEmpty) Map.empty[String, List[MbtDependencyModule]]
+        else
+          outputBase match {
+            case Some(base) =>
+              ScalaToolchainModules
+                .testingModules(base.resolve("external"))
+                .filter { case (version, _) => testingVersions(version) }
+            case None => Map.empty[String, List[MbtDependencyModule]]
+          }
       toolchain <- ScalaToolchainModules.resolve(
         libraryVersions,
         compilerVersions,
         compilerClasspathTargets,
+        testingModulesByVersion,
+        testTargets,
       )
       _ = scribe.info(
         s"bazel-mbt: resolved ${toolchain.modules.size} Scala toolchain " +

@@ -81,6 +81,74 @@ class ScalaToolchainModulesSuite extends BaseSuite {
     )
   }
 
+  test("testing-bundle-for-scala-test-target-only") {
+    val scalatest = "org.scalatest:scalatest_2.12:3.2.19"
+    val withTesting = toolchain.copy(
+      testingIdsByVersion = Map("2.12.21" -> List(scalatest)),
+      testTargets = Set("//pkg/t:some_test"),
+    )
+    assertEquals(
+      withTesting.moduleIdsFor(
+        Some("2.12.21"),
+        List("//pkg/t:some_test"),
+        existingIds = Set.empty,
+      ),
+      Set(library2, scalatest),
+    )
+    assertEquals(
+      withTesting.moduleIdsFor(
+        Some("2.12.21"),
+        List("//pkg/b:lib"),
+        existingIds = Set.empty,
+      ),
+      Set(library2),
+    )
+  }
+
+  test("testing-modules-discovered-from-bazel-external-dir") {
+    val external = java.nio.file.Files.createTempDirectory("external")
+    def repo(name: String, jars: String*): Unit = {
+      val dir = external.resolve(name)
+      java.nio.file.Files.createDirectories(dir)
+      jars.foreach(jar => java.nio.file.Files.createFile(dir.resolve(jar)))
+    }
+    repo(
+      "+scala_deps+io_bazel_rules_scala_scalatest_2_12_21",
+      "scalatest_2.12-3.2.19.jar",
+      "scalatest_2.12-3.2.19-src.jar",
+    )
+    repo(
+      "+scala_deps+io_bazel_rules_scala_scalactic_2_12_21",
+      "scalactic_2.12-3.2.19.jar",
+    )
+    repo("+maven+unrelated", "bar-1.0.jar")
+
+    val byVersion = ScalaToolchainModules.testingModules(external)
+    assertEquals(byVersion.keySet, Set("2.12.21"))
+    val modules = byVersion("2.12.21")
+    assertEquals(
+      modules.map(_.id),
+      List(
+        "org.scalactic:scalactic_2.12:3.2.19",
+        "org.scalatest:scalatest_2.12:3.2.19",
+      ),
+    )
+    val scalatestModule =
+      modules.find(_.id.startsWith("org.scalatest")).get
+    assert(scalatestModule.jar.endsWith("scalatest_2.12-3.2.19.jar"))
+    assert(
+      scalatestModule.sources.endsWith("scalatest_2.12-3.2.19-src.jar"),
+      "sources jar from the external repo should be attached",
+    )
+    val scalacticModule =
+      modules.find(_.id.startsWith("org.scalactic")).get
+    assertEquals(
+      Option(scalacticModule.sources),
+      None,
+      "no -src.jar present -> no sources",
+    )
+  }
+
   test("from-discovery-applies-version-matching-bundles") {
     val build = BazelMbtBuildSupport.fromDiscovery(
       granularity = BazelMbtNamespaceMode.BuildFile,

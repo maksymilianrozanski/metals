@@ -1,5 +1,7 @@
 package scala.meta.internal.metals.mbt.importer
 
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
 import scala.concurrent.ExecutionContext
@@ -44,6 +46,8 @@ object ScalaToolchainModules {
       libraryIdsByVersion: Map[String, List[String]],
       compilerIdsByVersion: Map[String, List[String]],
       compilerClasspathTargets: Set[String],
+      testingIdsByVersion: Map[String, List[String]] = Map.empty,
+      testTargets: Set[String] = Set.empty,
   ) {
 
     /**
@@ -61,10 +65,13 @@ object ScalaToolchainModules {
         case None => Set.empty
         case Some(version) =>
           val needsCompiler = targets.exists(compilerClasspathTargets)
+          val needsTesting = targets.exists(testTargets)
           val candidates =
             libraryIdsByVersion.getOrElse(version, Nil) ++
               (if (needsCompiler)
                  compilerIdsByVersion.getOrElse(version, Nil)
+               else Nil) ++
+              (if (needsTesting) testingIdsByVersion.getOrElse(version, Nil)
                else Nil)
           val existingNames = existingIds.map(organizationName)
           candidates
@@ -90,10 +97,74 @@ object ScalaToolchainModules {
   def isCompilerClasspathLabel(label: String): Boolean =
     label.endsWith(":scala_compile_classpath")
 
+  private val trailingScalaVersion = """_(\d+(?:_\d+)+)$""".r
+  private val mavenStyleJarName = """(.+?)-(\d[^-]*)\.jar""".r
+
+  /**
+   * Testing-framework jars per Scala version, discovered in the Bazel output
+   * base. `scala_test` targets compile against scalatest/scalactic through
+   * the rules_scala testing toolchain — invisible to `@maven//` matching like
+   * the compiler jars, but rules_scala materializes them (WITH `-src.jar`
+   * sources) under `external/<…scalatest…_x_y_z>/`, so the exact artifacts
+   * Bazel compiles against are available offline, no version guessing. Repos
+   * not using rules_scala's naming simply yield nothing.
+   */
+  def testingModules(
+      externalDir: Path
+  ): Map[String, List[MbtDependencyModule]] = {
+    val repoDirs =
+      if (Files.isDirectory(externalDir))
+        Files.list(externalDir).iterator().asScala.filter(Files.isDirectory(_))
+      else Iterator.empty
+    val modules = for {
+      dir <- repoDirs
+      name = dir.getFileName.toString
+      if name.contains("scalatest") || name.contains("scalactic")
+      version <- trailingScalaVersion
+        .findFirstMatchIn(name)
+        .map(_.group(1).replace('_', '.'))
+      jar <- Files
+        .list(dir)
+        .iterator()
+        .asScala
+        .find(p =>
+          p.getFileName.toString.endsWith(".jar") &&
+            !p.getFileName.toString.endsWith("-src.jar")
+        )
+      nameMatch <- mavenStyleJarName.findFirstMatchIn(jar.getFileName.toString)
+    } yield {
+      val artifact = nameMatch.group(1)
+      val artifactVersion = nameMatch.group(2)
+      val organization =
+        if (artifact.startsWith("scalactic")) "org.scalactic"
+        else "org.scalatest"
+      val sources = jar.resolveSibling(
+        jar.getFileName.toString.stripSuffix(".jar") + "-src.jar"
+      )
+      version -> MbtDependencyModule(
+        id = s"$organization:$artifact:$artifactVersion",
+        jar = jar.toUri.toString,
+        sources =
+          if (Files.isRegularFile(sources)) sources.toUri.toString
+          else null,
+      )
+    }
+    modules.toList.groupBy { case (version, _) => version }.map {
+      case (version, pairs) =>
+        version -> pairs
+          .map { case (_, module) => module }
+          .sortBy(_.id)
+          .distinctBy(_.id)
+    }
+  }
+
   def resolve(
       libraryVersions: Set[String],
       compilerVersions: Set[String],
       compilerClasspathTargets: Set[String],
+      testingModulesByVersion: Map[String, List[MbtDependencyModule]] =
+        Map.empty,
+      testTargets: Set[String] = Set.empty,
   )(implicit ec: ExecutionContext): Future[Resolution] = {
     val libraries = libraryVersions.toSeq.sorted.map { version =>
       fetchBundle(libraryDependency(version)).map(version -> _)
@@ -105,9 +176,11 @@ object ScalaToolchainModules {
       libraryBundles <- Future.sequence(libraries)
       compilerBundles <- Future.sequence(compilers)
     } yield {
-      val modules = (libraryBundles ++ compilerBundles)
-        .flatMap { case (_, bundle) => bundle }
-        .distinctBy(_.id)
+      val modules =
+        (libraryBundles ++ compilerBundles)
+          .flatMap { case (_, bundle) => bundle }
+          .concat(testingModulesByVersion.values.flatten)
+          .distinctBy(_.id)
       Resolution(
         modules,
         libraryBundles.toMap.map { case (version, bundle) =>
@@ -117,6 +190,10 @@ object ScalaToolchainModules {
           version -> bundle.map(_.id)
         },
         compilerClasspathTargets,
+        testingModulesByVersion.map { case (version, bundle) =>
+          version -> bundle.map(_.id)
+        },
+        testTargets,
       )
     }
   }
