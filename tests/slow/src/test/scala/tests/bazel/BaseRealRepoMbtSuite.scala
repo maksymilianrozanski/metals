@@ -82,12 +82,12 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
   // Drives `newServer`'s initial user config; flipped per phase before each
   // `newServer` call. Initialized to a harmless default for the throwaway
   // server created by `beforeEach`.
-  private var phaseConfig: UserConfiguration = UserConfiguration()
+  protected var phaseConfig: UserConfiguration = UserConfiguration()
   override def userConfig: UserConfiguration = phaseConfig
 
   private def projectView: AbsolutePath = repoDir.resolve(".bazelproject")
 
-  private def wipe(includeProjectView: Boolean): Unit = {
+  protected def wipe(includeProjectView: Boolean): Unit = {
     RecursivelyDelete(repoDir.resolve(".metals"))
     RecursivelyDelete(repoDir.resolve(".bsp"))
     RecursivelyDelete(repoDir.resolve(".bazelbsp"))
@@ -99,7 +99,7 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
     super.afterAll()
   }
 
-  private def writeProjectView(): Unit = {
+  protected def writeProjectView(): Unit = {
     val content =
       "targets:\n" + projectViewTargets
         .map(t => s"    $t")
@@ -124,13 +124,15 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
       .getOrElse("unknown")
 
   /** HEAD of the target repo being imported. */
-  private def repoHead: String = gitShortHead(repoDir.toFile)
+  protected def repoHead: String = gitShortHead(repoDir.toFile)
 
   /** HEAD of the Metals checkout under test (so reports are version-traceable). */
-  private def metalsHead: String = gitShortHead(PathIO.workingDirectory.toFile)
+  protected def metalsHead: String = gitShortHead(
+    PathIO.workingDirectory.toFile
+  )
 
   /** Render an LSP uri relative to the workspace (or tagged for jars/readonly). */
-  private def normalizeUri(uri: String): String = {
+  protected def normalizeUri(uri: String): String = {
     val readonly = "/.metals/readonly/"
     if (uri.contains(readonly))
       "readonly:" + uri.substring(uri.indexOf(readonly) + readonly.length)
@@ -144,7 +146,7 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
     } else uri
   }
 
-  private def renderLocations(locs: Seq[Location]): String = {
+  protected def renderLocations(locs: Seq[Location]): String = {
     val rendered = for (loc <- locs) yield {
       val r = loc.getRange
       s"${normalizeUri(loc.getUri)}:${r.getStart.getLine}:${r.getStart.getCharacter}" +
@@ -216,7 +218,7 @@ abstract class BaseRealRepoMbtSuite(suiteName: String)
   }
 
   /** Open + focus + compile each file so the real PC (with classpath) is ready. */
-  private def prepareFiles(files: List[String]): Future[Unit] =
+  protected def prepareFiles(files: List[String]): Future[Unit] =
     files.foldLeft(Future.successful(())) { (acc, file) =>
       acc.flatMap { _ =>
         val path = server.toPath(file)
