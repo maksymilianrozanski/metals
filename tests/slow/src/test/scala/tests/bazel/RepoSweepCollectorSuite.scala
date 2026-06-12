@@ -13,6 +13,8 @@ import scala.meta.internal.metals.HoverExtParams
 import scala.meta.internal.metals.InitializationOptions
 import scala.meta.internal.metals.Messages
 import scala.meta.internal.metals.MetalsEnrichments._
+import scala.meta.internal.metals.TestUserInterfaceKind
+import scala.meta.internal.metals.UserConfiguration
 import scala.meta.io.AbsolutePath
 
 import org.eclipse.lsp4j.SemanticTokensParams
@@ -48,6 +50,15 @@ class RepoSweepCollectorSuite extends BaseRealRepoMbtSuite("repo-sweep") {
       InitializationOptions.Default
         .copy(testExplorerProvider = Some(true), debuggingProvider = Some(true))
     )
+
+  // Test discovery only runs when the user interface is the Test Explorer
+  // (TestSuitesProvider.isExplorerEnabled requires BOTH the client capability
+  // above and this user setting; the default is CodeLenses).
+  override protected def mbtConfig: UserConfiguration =
+    super.mbtConfig.copy(testUserInterface = TestUserInterfaceKind.TestExplorer)
+
+  override protected def bspConfig: UserConfiguration =
+    super.bspConfig.copy(testUserInterface = TestUserInterfaceKind.TestExplorer)
 
   private val configPath: Path =
     PathIO.workingDirectory

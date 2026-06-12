@@ -92,10 +92,15 @@ drift). Judgment rules learned from differential testing here:
   files is correct (no main/test); an asymmetric empty on a main/test file is
   a finding but verify once by re-running before reporting (lens computation
   can trail the model refresh). `testExplorer` compares what the client was
-  TOLD, in both modes — `BOTH_EMPTY` means neither side ran test discovery
-  for the scope (no differential signal, possibly a product gap worth
-  noting); these kinds validate the server-side data behind the VS Code
-  "Run" lenses and test arrows, not the UI itself.
+  TOLD, in both modes; these kinds validate the server-side data behind the
+  VS Code "Run" lenses and test arrows, not the UI itself. Discovery only
+  runs when `testUserInterface = TestExplorer` is set in the USER CONFIG on
+  top of the client capability (`TestSuitesProvider.isExplorerEnabled`
+  requires both; the default is CodeLenses) — the collector sets both.
+  Expected shape on rules_scala: MBT emits suite Add events via its lazy
+  index-based discovery, while bazelbsp stays empty unless the repo enables
+  the semanticdb toolchain — `BSP_EMPTY` there is MBT being better, not
+  noise.
 - **Include at least one TEST source file** in `MBT_SWEEP_FILES`: test
   namespaces have different classpath/dependency wiring than main ones and
   fail differently (first sweep with one test file immediately surfaced
