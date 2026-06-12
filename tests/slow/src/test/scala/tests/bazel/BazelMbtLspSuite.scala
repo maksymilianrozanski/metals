@@ -366,7 +366,13 @@ class BazelMbtLspSuite
       _ = assertNoDiff(
         escapeMbtFile(mbtFile),
         s"""|{
-            |  "dependencyModules": [],
+            |  "dependencyModules": [
+            |    {
+            |      "id": "org.scala-lang:scala-library:2.13.18",
+            |      "jar": "<jar-path>",
+            |      "sources": "<sources-path>"
+            |    }
+            |  ],
             |  "namespaces": {
             |    "//lib": {
             |      "sources": [
@@ -375,7 +381,9 @@ class BazelMbtLspSuite
             |      ],
             |      "scalacOptions": [],
             |      "javacOptions": [],
-            |      "dependencyModules": [],
+            |      "dependencyModules": [
+            |        "org.scala-lang:scala-library:2.13.18"
+            |      ],
             |      "scalaVersion": "2.13.18",
             |      "dependsOn": [],
             |      "classDirectories": []

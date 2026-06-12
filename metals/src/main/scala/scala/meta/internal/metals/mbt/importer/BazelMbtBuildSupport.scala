@@ -43,6 +43,8 @@ object BazelMbtBuildSupport {
       dependencyModules: Seq[MbtDependencyModule],
       scalaVersionByTarget: Map[String, Option[String]],
       inactiveSources: Map[String, BazelBuildSrcs.InactiveSource],
+      toolchain: ScalaToolchainModules.Resolution =
+        ScalaToolchainModules.Resolution.empty,
   ): MbtBuild = {
     val depModules = new ju.ArrayList[MbtDependencyModule]()
     dependencyModules.foreach(depModules.add)
@@ -128,6 +130,19 @@ object BazelMbtBuildSupport {
           inactive.originTarget
       }
       val namespaces = new ju.LinkedHashMap[String, MbtNamespace]()
+      // Bazel's Scala toolchain enters the compile classpath of scala rules
+      // only — a namespace without Scala sources (e.g. java_library targets,
+      // whose scalaVersion is just the project-wide fallback) gets no
+      // toolchain modules.
+      def toolchainIdsFor(
+          files: Iterable[String],
+          version: Option[String],
+          targets: Iterable[String],
+          existing: Set[String],
+      ): Set[String] =
+        if (files.exists(_.endsWith(".scala")))
+          toolchain.moduleIdsFor(version, targets, existing)
+        else Set.empty
 
       if (granularity == BazelMbtNamespaceMode.BuildFile) {
         val byBuildFile = mutable.Map.empty[String, mutable.Set[String]]
@@ -176,6 +191,7 @@ object BazelMbtBuildSupport {
             nsScalaVersions
               .maxByOption(SemVer.Version.fromString)
               .orElse(scalaVersion)
+          val externalDeps = externalDepsByNs.getOrElse(namespace, Set.empty)
           putNamespace(
             namespaces,
             namespace,
@@ -183,7 +199,13 @@ object BazelMbtBuildSupport {
             scalacOptionsByBuildFile.getOrElse(namespace, Nil),
             javacOptionsByBuildFile.getOrElse(namespace, Nil),
             dependsByNs.getOrElse(namespace, Set.empty),
-            externalDepsByNs.getOrElse(namespace, Set.empty),
+            externalDeps ++
+              toolchainIdsFor(
+                files,
+                nsScalaVersion,
+                targetsForNs,
+                externalDeps,
+              ),
             runTargetsByNs.getOrElse(namespace, Set.empty),
             classDirectoriesByNs.get(namespace),
             nsScalaVersion,
@@ -207,7 +229,8 @@ object BazelMbtBuildSupport {
           Nil,
           Nil,
           Set.empty,
-          allExtDeps,
+          allExtDeps ++
+            toolchainIdsFor(allSrcs, wsScalaVersion, targetLabels, allExtDeps),
           runTargetsByNs.getOrElse(workspaceNamespaceName, Set.empty),
           classDirectoriesByNs.get(workspaceNamespaceName),
           wsScalaVersion,
@@ -240,12 +263,25 @@ object BazelMbtBuildSupport {
           Nil,
           Nil,
           dependsOn,
-          externalDeps,
+          externalDeps ++
+            toolchainIdsFor(files, Some(version), origins, externalDeps),
           Set.empty,
           None,
           Some(version),
         )
       }
+      // Toolchain modules join the build's module list only when some
+      // namespace actually references them — a workspace whose stdlib is
+      // already pinned through `@maven//` keeps an unchanged module list.
+      val referencedIds = namespaces
+        .values()
+        .asScala
+        .flatMap(_.getDependencyModuleIds.asScala)
+        .toSet
+      val knownIds = dependencyModules.map(_.id).toSet
+      toolchain.modules
+        .filter(module => referencedIds(module.id) && !knownIds(module.id))
+        .foreach(depModules.add)
       MbtBuild(depModules, namespaces)
     }
   }

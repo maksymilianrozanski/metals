@@ -117,6 +117,41 @@ abstract class BazelMbtImporter(
         s"bazel-mbt: ${inactiveSources.size} version-specific sources " +
           "from inactive select() branches"
       )
+      // Bazel supplies the Scala standard library (and compiler, for targets
+      // depending on the rules_scala `scala_compile_classpath` toolchain
+      // target) through toolchain resolution, invisible to the maven
+      // matching above — resolve the equivalent jars per Scala version.
+      compilerClasspathTargets = targets.filter { target =>
+        targetsXmlDump.depsByTarget
+          .getOrElse(target, Nil)
+          .exists(ScalaToolchainModules.isCompilerClasspathLabel)
+      }.toSet
+      libraryVersions =
+        (scalaVersionByTarget.collect {
+          case (target, Some(version))
+              if srcs.getOrElse(target, Nil).exists(_.endsWith(".scala")) =>
+            version
+        } ++ inactiveSources.collect {
+          case (label, inactive) if label.endsWith(".scala") =>
+            inactive.version
+        }).toSet
+      compilerVersions = (scalaVersionByTarget.collect {
+        case (target, Some(version)) if compilerClasspathTargets(target) =>
+          version
+      } ++ inactiveSources.values.collect {
+        case BazelBuildSrcs.InactiveSource(version, origin)
+            if compilerClasspathTargets(origin) =>
+          version
+      }).toSet
+      toolchain <- ScalaToolchainModules.resolve(
+        libraryVersions,
+        compilerVersions,
+        compilerClasspathTargets,
+      )
+      _ = scribe.info(
+        s"bazel-mbt: resolved ${toolchain.modules.size} Scala toolchain " +
+          s"modules for versions ${libraryVersions.toSeq.sorted.mkString(", ")}"
+      )
       build = BazelMbtBuildSupport.fromDiscovery(
         namespaceMode,
         targets,
@@ -130,6 +165,7 @@ abstract class BazelMbtImporter(
         dependencyModules,
         scalaVersionByTarget,
         inactiveSources,
+        toolchain,
       )
       _ <- Future(Files.writeString(out.toNIO, MbtBuild.toJson(build)))
     } yield ()
